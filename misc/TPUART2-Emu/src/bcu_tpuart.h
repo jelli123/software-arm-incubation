@@ -9,6 +9,8 @@
 #ifndef BCU_TPUART_H_
 #define BCU_TPUART_H_
 
+#include <cstdint>
+
 #include <sblib/eib/bcu_base.h>
 #include <sblib/eib/bus.h>
 #include <sblib/eib/userRamBCU1.h>
@@ -26,11 +28,12 @@ class BcuTpUart: public BcuBase
 public:
     BcuTpUart();
     explicit BcuTpUart(UserRamBCU1* userRamBcu1);
-    ~BcuTpUart() = default;
+    ~BcuTpUart() override = default;
 
     void begin();
 
-    bool applicationRunning() const override { return (enabled); }
+    [[nodiscard]] bool applicationRunning() const override { return enabled; }
+    uint8_t& layerStatus() override;
 
     /**
      * Enable or disable the link layer.
@@ -45,14 +48,14 @@ public:
     /**
      * @return true if received frames are acknowledged on the bus
      */
-    bool linkLayerActive() const;
+    [[nodiscard]] bool linkLayerActive() const;
 
 protected:
-    bool processApci(ApciCommand apciCmd, unsigned char* telegram, uint8_t telLength,
+    bool processApci(ApciCommand apciCmd, uint8_t* telegram, uint8_t telLength,
                      uint8_t* sendBuffer) override;
     bool processGroupAddressTelegram(ApciCommand apciCmd, uint16_t groupAddress,
-                                     unsigned char* telegram, uint8_t telLength) override;
-    bool processBroadCastTelegram(ApciCommand apciCmd, unsigned char* telegram,
+                                     uint8_t* telegram, uint8_t telLength) override;
+    bool processBroadCastTelegram(ApciCommand apciCmd, uint8_t* telegram,
                                   uint8_t telLength) override;
 };
 

@@ -1,0 +1,11 @@
+set(SB_TPUART2_EMU_SRC
+    src/app_main.cpp
+    src/bcu_tpuart.cpp
+    src/bcu_tpuart.h
+    src/config.h
+    src/cr_cpp_config.cpp
+    src/cr_startup_lpc11xx.cpp
+    src/tpuart_defs.h
+    src/tpuart_emulator.cpp
+    src/tpuart_emulator.h
+)

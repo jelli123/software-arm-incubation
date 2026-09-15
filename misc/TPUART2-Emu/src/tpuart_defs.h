@@ -12,7 +12,7 @@
 #ifndef TPUART_DEFS_H_
 #define TPUART_DEFS_H_
 
-#include <stdint.h>
+#include <cstdint>
 
 /**
  * Services sent by the host to the transceiver.
@@ -40,6 +40,16 @@ enum TpUartHostService : uint8_t
     U_SET_ADDRESS_REQ_ALT   = 0xF1, //!< 0xF1 + addrHigh + addrLow (used by OpenKNX)
     U_SET_REPETITION_REQ    = 0xF2  //!< 0xF2 + repetition byte
 };
+
+constexpr uint8_t U_L_DATA_OFFSET_REQ_MAX     = 0x0C; //!< last code of @ref U_L_DATA_OFFSET_REQ
+constexpr uint8_t U_ACK_INFORMATION_REQ_MAX   = 0x17; //!< last code of @ref U_ACK_INFORMATION_REQ
+constexpr uint8_t U_INT_REG_WR_REQ_MAX        = 0x2B; //!< last code of @ref U_INT_REG_WR_REQ
+constexpr uint8_t U_L_DATA_END_REQ_MAX        = 0x7F; //!< last code of @ref U_L_DATA_END_REQ
+constexpr uint8_t U_L_DATA_START_CONT_REQ_MAX = 0xBF; //!< last code of @ref U_L_DATA_START_CONT_REQ
+
+constexpr uint8_t U_L_DATA_OFFSET_MASK = 0x07; //!< offset part of @ref U_L_DATA_OFFSET_REQ
+constexpr uint8_t U_L_DATA_INDEX_MASK  = 0x3F; //!< octet index part of U_L_DataStart/Cont/End
+constexpr uint8_t U_L_DATA_OFFSET_UNIT = 64;   //!< octets per @ref U_L_DATA_OFFSET_REQ step
 
 /**
  * Flags of the @ref U_ACK_INFORMATION_REQ service.
@@ -79,11 +89,13 @@ enum TpUartStateFlags : uint8_t
     TPUART_TEMPERATURE_WARNING = 0x08
 };
 
-/** Control byte mask to distinguish standard from extended L_Data frames. */
-#define LPDU_FRAME_TYPE_MASK  (0xD3)
-/** Control byte value of a standard L_Data frame after masking. */
-#define LPDU_FRAME_TYPE_STD   (0x90)
+/** Maximum size of a KNX frame including its checksum octet. */
+constexpr uint16_t TPUART_MAX_FRAME_SIZE = 64;
 /** Number of octets a standard L_Data frame has in addition to its payload. */
-#define LPDU_STD_OVERHEAD     (8)
+constexpr uint16_t LPDU_STD_OVERHEAD = 8;
+/** Index of the octet holding the payload length of a standard L_Data frame. */
+constexpr uint8_t LPDU_STD_LENGTH_OCTET = 5;
+/** Mask of the payload length in @ref LPDU_STD_LENGTH_OCTET. */
+constexpr uint8_t LPDU_STD_LENGTH_MASK = 0x0F;
 
 #endif /* TPUART_DEFS_H_ */

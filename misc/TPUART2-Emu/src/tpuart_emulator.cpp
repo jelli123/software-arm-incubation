@@ -10,37 +10,33 @@
 #include <sblib/digital_pin.h>
 #include <sblib/serial.h>
 #include <sblib/timer.h>
+#include <sblib/eib/bus_const.h>
+#include <sblib/eib/knx_lpdu.h>
 
 #include <cstring>
 
 #include "tpuart_defs.h"
 #include "tpuart_emulator.h"
 
-#define TX_QUEUE_MASK (TPUART_TX_QUEUE_SIZE - 1)
-
 TpUartEmulator::TpUartEmulator(BcuTpUart& bcuTpUart) :
     bcu(bcuTpUart),
     cmdByte(0),
+    cmdData{},
     cmdDataLen(0),
     cmdDataExpected(0),
+    assembleBuffer{},
     txOffset(0),
+    txFrame{},
     txPending(false),
     txSuppressCon(false),
     txStartTime(0),
-    txQueueHead(0),
-    txQueueTail(0),
+    txQueue(TPUART_TX_QUEUE_SIZE),
     lastTxByteTime(0),
     busMonitorMode(false),
     busyMode(false),
     stopMode(false),
-    errorFlags(0),
-    knxRxLedOffTime(0),
-    hostRxLedOffTime(0)
+    errorFlags(0)
 {
-    cmdData[0] = 0;
-    cmdData[1] = 0;
-    memset(assembleBuffer, 0, sizeof(assembleBuffer));
-    memset(txFrame, 0, sizeof(txFrame));
 }
 
 void TpUartEmulator::begin()
@@ -64,52 +60,35 @@ void TpUartEmulator::loop()
  * ---------------------------------------------------------------------------
  */
 
-uint8_t TpUartEmulator::hostServiceDataLength(uint8_t cmd)
+uint8_t TpUartEmulator::hostServiceDataLength(const uint8_t cmd)
 {
-    if (cmd >= U_L_DATA_START_CONT_REQ) // 0x80..0xFF
+    switch (cmd)
     {
-        if (cmd <= 0xBF)
-        {
-            return (1); // U_L_DataStart/Cont, followed by the frame octet
-        }
-        if (cmd == U_SET_ADDRESS_REQ_ALT)
-        {
-            return (2);
-        }
-        if (cmd == U_SET_REPETITION_REQ)
-        {
-            return (1);
-        }
-        return (0);
-    }
-
-    if (cmd >= U_L_DATA_END_REQ) // 0x40..0x7F
-    {
-        return (1); // U_L_DataEnd, followed by the last frame octet
-    }
-
-    if (cmd == U_SET_ADDRESS_REQ) // 0x28
-    {
-        return (2);
-    }
-
-    if ((cmd >= U_INT_REG_WR_REQ) && (cmd <= 0x2B)) // NCN512x register write
-    {
-        return (1);
-    }
+    case U_SET_ADDRESS_REQ:     // 0x28 + addrHigh + addrLow
+    case U_SET_ADDRESS_REQ_ALT: // 0xF1 + addrHigh + addrLow
+        return 2;
 
     // Repetition counter. The OpenKNX stack sends this whenever the configured
     // NACK/BUSY repetition count differs from the default, but only when it is
     // NOT built for the NCN512x (there the same setting uses 0xF2).
-    if (cmd == U_MXRSTCNT_REQ) // 0x24
-    {
-        return (1);
-    }
+    case U_MXRSTCNT_REQ:
+    case U_SET_REPETITION_REQ:
+        return 1;
 
-    return (0);
+    default:
+        if ((cmd >= U_L_DATA_END_REQ) && (cmd <= U_L_DATA_START_CONT_REQ_MAX))
+        {
+            return 1; // U_L_DataEnd and U_L_DataStart/Cont, followed by the frame octet
+        }
+        if ((cmd >= U_INT_REG_WR_REQ) && (cmd <= U_INT_REG_WR_REQ_MAX))
+        {
+            return 1; // NCN512x register write
+        }
+        return 0;
+    }
 }
 
-void TpUartEmulator::processHostByte(uint8_t data)
+void TpUartEmulator::processHostByte(const uint8_t data)
 {
     if (cmdDataExpected != 0)
     {
@@ -119,55 +98,50 @@ void TpUartEmulator::processHostByte(uint8_t data)
             return;
         }
         cmdDataExpected = 0;
-        handleHostService(cmdByte, cmdData);
-        return;
+    }
+    else
+    {
+        cmdByte = data;
+        cmdDataLen = 0;
+        cmdDataExpected = hostServiceDataLength(data);
+        if (cmdDataExpected != 0)
+        {
+            return;
+        }
     }
 
-    cmdByte = data;
-    cmdDataLen = 0;
-    cmdDataExpected = hostServiceDataLength(data);
-    if (cmdDataExpected == 0)
-    {
-        handleHostService(cmdByte, nullptr);
-    }
+    handleHostService(cmdByte, cmdData);
 }
 
-void TpUartEmulator::handleHostService(uint8_t cmd, const uint8_t* data)
+void TpUartEmulator::handleHostService(const uint8_t cmd, const uint8_t* data)
 {
     // Frame transmission services are the most frequent ones, handle them first.
-    if ((cmd >= U_L_DATA_START_CONT_REQ) && (cmd <= 0xBF))
+    if ((cmd >= U_L_DATA_END_REQ) && (cmd <= U_L_DATA_START_CONT_REQ_MAX))
     {
-        handleDataOctet((uint16_t)txOffset * 64u + (cmd & 0x3F), data[0]);
+        const auto index = static_cast<uint16_t>(txOffset * U_L_DATA_OFFSET_UNIT + (cmd & U_L_DATA_INDEX_MASK));
+        if (cmd >= U_L_DATA_START_CONT_REQ)
+        {
+            handleDataOctet(index, data[0]);
+        }
+        else
+        {
+            handleFrameEnd(index, data[0]);
+        }
         return;
     }
 
-    if ((cmd >= U_L_DATA_END_REQ) && (cmd <= 0x7F))
+    if ((cmd >= U_L_DATA_OFFSET_REQ) && (cmd <= U_L_DATA_OFFSET_REQ_MAX))
     {
-        handleFrameEnd((uint16_t)txOffset * 64u + (cmd & 0x3F), data[0]);
+        txOffset = cmd & U_L_DATA_OFFSET_MASK;
         return;
     }
 
-    if ((cmd >= U_L_DATA_OFFSET_REQ) && (cmd <= 0x0C))
-    {
-        txOffset = cmd & 0x07;
-        return;
-    }
-
-    if ((cmd >= U_ACK_INFORMATION_REQ) && (cmd <= 0x17))
+    if ((cmd >= U_ACK_INFORMATION_REQ) && (cmd <= U_ACK_INFORMATION_REQ_MAX))
     {
         // The acknowledge decision cannot be delegated to the host: the KNX
         // acknowledge slot opens 15 bit times after the last frame octet, while
         // sblib only reports a telegram once it is completely received. The
         // library therefore acknowledges autonomously, see README.md.
-        return;
-    }
-
-    if ((cmd >= U_SET_ADDRESS_REQ) && (cmd <= 0x2B))
-    {
-        if (cmd == U_SET_ADDRESS_REQ)
-        {
-            bcu.setOwnAddress(makeWord(data[0], data[1]));
-        }
         return;
     }
 
@@ -202,7 +176,7 @@ void TpUartEmulator::handleHostService(uint8_t cmd, const uint8_t* data)
 
     case U_SYSTEM_STATE_REQ:
         queueByte(U_SYSTEM_STAT_IND);
-        queueByte(stopMode ? 0x01 : 0x00);
+        queueByte(static_cast<uint8_t>(stopMode));
         break;
 
     case U_STOP_MODE_REQ:
@@ -222,14 +196,15 @@ void TpUartEmulator::handleHostService(uint8_t cmd, const uint8_t* data)
         }
         break;
 
+    case U_SET_ADDRESS_REQ:
     case U_SET_ADDRESS_REQ_ALT:
         bcu.setOwnAddress(makeWord(data[0], data[1]));
         break;
 
     default:
-        // U_ProductId, U_Configure, U_IntRegRd, U_SetRepetition and anything
-        // unknown are silently accepted. Their data octets, if any, have
-        // already been consumed by hostServiceDataLength().
+        // U_ProductId, U_Configure, U_IntRegRd/Wr, U_MxRstCnt, U_SetRepetition
+        // and anything unknown are silently accepted. Their data octets, if any,
+        // have already been consumed by hostServiceDataLength().
         break;
     }
 }
@@ -251,8 +226,7 @@ void TpUartEmulator::handleReset()
     bcu.setLinkLayerActive(true);
 
     // Drop everything that is still queued towards the host.
-    txQueueHead = 0;
-    txQueueTail = 0;
+    txQueue.clear();
     bcu.bus->discardReceivedTelegram();
 
     if (txPending)
@@ -267,11 +241,11 @@ void TpUartEmulator::handleReset()
 
 void TpUartEmulator::handleStateRequest()
 {
-    queueByte((uint8_t)(U_STATE_IND | errorFlags));
+    queueByte(static_cast<uint8_t>(U_STATE_IND | errorFlags));
     errorFlags = 0;
 }
 
-void TpUartEmulator::handleDataOctet(uint16_t index, uint8_t data)
+void TpUartEmulator::handleDataOctet(const uint16_t index, const uint8_t data)
 {
     if (index >= TPUART_MAX_FRAME_SIZE)
     {
@@ -281,42 +255,51 @@ void TpUartEmulator::handleDataOctet(uint16_t index, uint8_t data)
     assembleBuffer[index] = data;
 }
 
-void TpUartEmulator::handleFrameEnd(uint16_t index, uint8_t data)
+void TpUartEmulator::handleFrameEnd(const uint16_t index, const uint8_t data)
 {
     txOffset = 0;
 
     if (index >= TPUART_MAX_FRAME_SIZE)
     {
-        errorFlags |= TPUART_PROTOCOL_ERROR;
-        queueByte(L_DATA_CON);
+        rejectFrame();
         return;
     }
 
     assembleBuffer[index] = data;
-    submitFrame(index + 1);
+    submitFrame(static_cast<uint16_t>(index + 1));
 }
 
-void TpUartEmulator::submitFrame(uint16_t length)
+bool TpUartEmulator::isSendableFrame(const uint16_t length) const
 {
-    bool valid = (length >= LPDU_STD_OVERHEAD) && (length <= TPUART_MAX_FRAME_SIZE);
-
-    // sblib's Bus state machine implements standard frames only.
-    valid = valid && ((assembleBuffer[0] & LPDU_FRAME_TYPE_MASK) == LPDU_FRAME_TYPE_STD);
-    valid = valid && (length == (uint16_t)((assembleBuffer[5] & 0x0F) + LPDU_STD_OVERHEAD));
-
-    if (!valid)
+    if ((length < LPDU_STD_OVERHEAD) || (length > TPUART_MAX_FRAME_SIZE))
     {
-        errorFlags |= TPUART_PROTOCOL_ERROR;
-        queueByte(L_DATA_CON);
-        return;
+        return false;
     }
 
-    if (txPending || stopMode)
+    // sblib's Bus state machine implements standard frames only. Also check the
+    // fixed bits of the control byte, Bus::sendTelegram() does not validate them.
+    if ((frameType(assembleBuffer) != FRAME_STANDARD) ||
+        ((assembleBuffer[0] & VALID_DATA_FRAME_TYPE_MASK) != VALID_DATA_FRAME_TYPE_VALUE))
     {
-        // The host did not wait for the previous confirmation, or the
-        // transceiver is detached from the bus.
-        errorFlags |= TPUART_PROTOCOL_ERROR;
-        queueByte(L_DATA_CON);
+        return false;
+    }
+
+    return length == (assembleBuffer[LPDU_STD_LENGTH_OCTET] & LPDU_STD_LENGTH_MASK) + LPDU_STD_OVERHEAD;
+}
+
+void TpUartEmulator::rejectFrame()
+{
+    errorFlags |= TPUART_PROTOCOL_ERROR;
+    queueByte(L_DATA_CON);
+}
+
+void TpUartEmulator::submitFrame(const uint16_t length)
+{
+    // Reject invalid frames, frames sent before the previous confirmation and
+    // frames sent while the transceiver is detached from the bus.
+    if (!isSendableFrame(length) || txPending || stopMode)
+    {
+        rejectFrame();
         return;
     }
 
@@ -329,7 +312,7 @@ void TpUartEmulator::submitFrame(uint16_t length)
     bcu.setOwnAddress(makeWord(txFrame[1], txFrame[2]));
 
     // The last octet is the checksum, sblib recalculates and appends it.
-    bcu.bus->sendTelegram(txFrame, (unsigned short)(length - 1));
+    bcu.bus->sendTelegram(txFrame, static_cast<uint16_t>(length - 1));
     txPending = true;
     txSuppressCon = false;
     txStartTime = millis();
@@ -337,12 +320,12 @@ void TpUartEmulator::submitFrame(uint16_t length)
 
 void TpUartEmulator::pollHost()
 {
-    int data;
+    int16_t data;
     while ((data = serial.read()) >= 0)
     {
-        hostRxLedOffTime = millis() + LED_BLINK_MS;
+        hostRxLed.start(LED_BLINK_MS);
         digitalWrite(LED_SERIAL_RX, LED_ON);
-        processHostByte((uint8_t)data);
+        processHostByte(static_cast<uint8_t>(data));
     }
 }
 
@@ -359,7 +342,7 @@ void TpUartEmulator::pollKnxReceive()
         return;
     }
 
-    uint16_t length = (uint16_t)bcu.bus->telegramLen;
+    const auto length = static_cast<uint16_t>(bcu.bus->telegramLen);
 
     if ((length < LPDU_STD_OVERHEAD) || (length > TPUART_MAX_FRAME_SIZE))
     {
@@ -378,7 +361,7 @@ void TpUartEmulator::pollKnxReceive()
     queueBytes(bcu.bus->telegram, length);
     bcu.bus->discardReceivedTelegram();
 
-    knxRxLedOffTime = millis() + LED_BLINK_MS;
+    knxRxLed.start(LED_BLINK_MS);
     digitalWrite(LED_KNX_RX, LED_ON);
 }
 
@@ -396,13 +379,13 @@ void TpUartEmulator::pollKnxTransmit()
         {
             // sblib does not expose the transmission result, and it already
             // repeats a frame on NACK and BUSY. Report a positive confirmation.
-            queueByte((uint8_t)(L_DATA_CON | L_DATA_CON_SUCCESS));
+            queueByte(static_cast<uint8_t>(L_DATA_CON | L_DATA_CON_SUCCESS));
         }
         txSuppressCon = false;
         return;
     }
 
-    if ((uint32_t)(millis() - txStartTime) >= TPUART_TX_CONFIRM_TIMEOUT_MS)
+    if (static_cast<uint32_t>(millis() - txStartTime) >= TPUART_TX_CONFIRM_TIMEOUT_MS)
     {
         txPending = false;
         errorFlags |= TPUART_TRANSMIT_ERROR;
@@ -416,13 +399,11 @@ void TpUartEmulator::pollKnxTransmit()
 
 void TpUartEmulator::pollLeds()
 {
-    uint32_t now = millis();
-
-    if ((int32_t)(now - knxRxLedOffTime) >= 0)
+    if (knxRxLed.expired())
     {
         digitalWrite(LED_KNX_RX, LED_OFF);
     }
-    if ((int32_t)(now - hostRxLedOffTime) >= 0)
+    if (hostRxLed.expired())
     {
         digitalWrite(LED_SERIAL_RX, LED_OFF);
     }
@@ -434,24 +415,21 @@ void TpUartEmulator::pollLeds()
  * ---------------------------------------------------------------------------
  */
 
-bool TpUartEmulator::queueFree(uint16_t count) const
+bool TpUartEmulator::queueFree(const uint16_t count) const
 {
-    uint16_t used = (uint16_t)((txQueueTail - txQueueHead) & TX_QUEUE_MASK);
-    return ((TPUART_TX_QUEUE_SIZE - 1 - used) >= count);
+    // A RingBuffer holds at most getBufferSize() - 1 octets.
+    return (txQueue.getBufferSize() - 1u - txQueue.available()) >= count;
 }
 
-void TpUartEmulator::queueByte(uint8_t data)
+void TpUartEmulator::queueByte(const uint8_t data)
 {
-    if (!queueFree(1))
+    if (!txQueue.push(data))
     {
         errorFlags |= TPUART_PROTOCOL_ERROR;
-        return;
     }
-    txQueue[txQueueTail] = data;
-    txQueueTail = (uint16_t)((txQueueTail + 1) & TX_QUEUE_MASK);
 }
 
-void TpUartEmulator::queueBytes(const uint8_t* data, uint16_t length)
+void TpUartEmulator::queueBytes(const uint8_t* data, const uint16_t length)
 {
     for (uint16_t i = 0; i < length; i++)
     {
@@ -461,19 +439,19 @@ void TpUartEmulator::queueBytes(const uint8_t* data, uint16_t length)
 
 void TpUartEmulator::drainQueue()
 {
-    while (txQueueHead != txQueueTail)
+    while (!txQueue.empty())
     {
 #if (TPUART_TX_PACING_MS > 0)
-        if ((uint32_t)(millis() - lastTxByteTime) < TPUART_TX_PACING_MS)
+        if (static_cast<uint32_t>(millis() - lastTxByteTime) < TPUART_TX_PACING_MS)
         {
             return;
         }
 #endif
-        if (serial.write(txQueue[txQueueHead]) != 1)
+        if (serial.write(static_cast<uint8_t>(txQueue.peek())) != 1)
         {
             return; // serial write buffer is full, try again next round
         }
-        txQueueHead = (uint16_t)((txQueueHead + 1) & TX_QUEUE_MASK);
+        static_cast<void>(txQueue.pop());
         lastTxByteTime = millis();
 
 #if (TPUART_TX_PACING_MS > 0)

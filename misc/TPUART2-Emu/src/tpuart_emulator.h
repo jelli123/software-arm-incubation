@@ -8,10 +8,14 @@
 #ifndef TPUART_EMULATOR_H_
 #define TPUART_EMULATOR_H_
 
-#include <stdint.h>
+#include <cstdint>
+
+#include <sblib/ring_buffer.h>
+#include <sblib/timeout.h>
 
 #include "bcu_tpuart.h"
 #include "config.h"
+#include "tpuart_defs.h"
 
 /**
  * Emulates the host interface of a Siemens TP-UART 2.
@@ -43,6 +47,8 @@ private:
     void handleStateRequest();
     void handleDataOctet(uint16_t index, uint8_t data);
     void handleFrameEnd(uint16_t index, uint8_t data);
+    [[nodiscard]] bool isSendableFrame(uint16_t length) const;
+    void rejectFrame();
     void submitFrame(uint16_t length);
 
     void pollHost();
@@ -50,7 +56,7 @@ private:
     void pollKnxTransmit();
     void pollLeds();
 
-    bool queueFree(uint16_t count) const;
+    [[nodiscard]] bool queueFree(uint16_t count) const;
     void queueByte(uint8_t data);
     void queueBytes(const uint8_t* data, uint16_t length);
     void drainQueue();
@@ -73,19 +79,17 @@ private:
     bool     txSuppressCon;         //!< drop the confirmation, e.g. after a reset
     uint32_t txStartTime;           //!< millis() when the frame was handed over
 
-    // Ring buffer, controller -> host
-    uint8_t  txQueue[TPUART_TX_QUEUE_SIZE];
-    uint16_t txQueueHead;
-    uint16_t txQueueTail;
-    uint32_t lastTxByteTime;
+    // Controller -> host
+    RingBuffer txQueue;             //!< octets waiting to be sent to the host
+    uint32_t lastTxByteTime;        //!< millis() of the last octet sent to the host
 
     bool    busMonitorMode;         //!< set by U_BusmonReq, cleared by reset only
     bool    busyMode;               //!< set by U_SetBusyReq
     bool    stopMode;               //!< set by U_StopModeReq
     uint8_t errorFlags;             //!< latched flags for the next U_State.ind
 
-    uint32_t knxRxLedOffTime;
-    uint32_t hostRxLedOffTime;
+    Timeout knxRxLed;               //!< switches the KNX-Rx LED off again
+    Timeout hostRxLed;              //!< switches the Serial-Rx LED off again
 };
 
 #endif /* TPUART_EMULATOR_H_ */

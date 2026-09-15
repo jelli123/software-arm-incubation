@@ -46,11 +46,10 @@ BcuBase* setup()
     serial.setRxPin(PIN_TPUART_SERIAL_RX);
     serial.setTxPin(PIN_TPUART_SERIAL_TX);
     pinMode(PIN_TPUART_SERIAL_RX, SERIAL_RXD | PULL_UP | HYSTERESIS);
-    serial.begin(TPUART_BAUDRATE, SERIAL_8E1);
-    serial.clearBuffers();
+    serial.begin(TPUART_BAUDRATE, SERIAL_8E1); // also allocates fresh, empty rx/tx buffers
 
     tpUart.begin();
-    return (&bcuTpUart);
+    return &bcuTpUart;
 }
 
 /**
