@@ -89,13 +89,19 @@ enum TpUartStateFlags : uint8_t
     TPUART_TEMPERATURE_WARNING = 0x08
 };
 
-/** Maximum size of a KNX frame including its checksum octet. */
+/**
+ * Maximum size of a KNX frame including its checksum octet. Also the size of
+ * sblib's receive buffer. An extended frame of this size carries an APDU of
+ * 64 - @ref LPDU_EXT_OVERHEAD = 55 octets.
+ */
 constexpr uint16_t TPUART_MAX_FRAME_SIZE = 64;
 /** Number of octets a standard L_Data frame has in addition to its payload. */
 constexpr uint16_t LPDU_STD_OVERHEAD = 8;
-/** Index of the octet holding the payload length of a standard L_Data frame. */
-constexpr uint8_t LPDU_STD_LENGTH_OCTET = 5;
-/** Mask of the payload length in @ref LPDU_STD_LENGTH_OCTET. */
-constexpr uint8_t LPDU_STD_LENGTH_MASK = 0x0F;
+/** Number of octets an extended L_Data frame has in addition to its payload. */
+constexpr uint16_t LPDU_EXT_OVERHEAD = 9;
+/** Index of the high octet of the source address of a standard L_Data frame. */
+constexpr uint8_t LPDU_STD_SOURCE_OCTET = 1;
+/** Index of the high octet of the source address of an extended L_Data frame. */
+constexpr uint8_t LPDU_EXT_SOURCE_OCTET = 2;
 
 #endif /* TPUART_DEFS_H_ */

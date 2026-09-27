@@ -1,4 +1,4 @@
 [submodule "software-arm-lib"]
 	path = software-arm-lib
-	url = https://github.com/Darthyson/software-arm-lib.git
-	branch = dev/lib-refactor
+	url = https://github.com/jelli123/software-arm-lib.git
+	branch = feature/extended-frames

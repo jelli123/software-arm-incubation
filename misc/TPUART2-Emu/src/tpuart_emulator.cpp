@@ -12,6 +12,7 @@
 #include <sblib/timer.h>
 #include <sblib/eib/bus_const.h>
 #include <sblib/eib/knx_lpdu.h>
+#include <sblib/eib/knx_npdu.h>
 
 #include <cstring>
 
@@ -271,20 +272,20 @@ void TpUartEmulator::handleFrameEnd(const uint16_t index, const uint8_t data)
 
 bool TpUartEmulator::isSendableFrame(const uint16_t length) const
 {
-    if ((length < LPDU_STD_OVERHEAD) || (length > TPUART_MAX_FRAME_SIZE))
+    const auto overhead = (frameType(assembleBuffer) == FRAME_STANDARD) ? LPDU_STD_OVERHEAD : LPDU_EXT_OVERHEAD;
+    if ((length < overhead) || (length > TPUART_MAX_FRAME_SIZE))
     {
         return false;
     }
 
-    // sblib's Bus state machine implements standard frames only. Also check the
-    // fixed bits of the control byte, Bus::sendTelegram() does not validate them.
-    if ((frameType(assembleBuffer) != FRAME_STANDARD) ||
-        ((assembleBuffer[0] & VALID_DATA_FRAME_TYPE_MASK) != VALID_DATA_FRAME_TYPE_VALUE))
+    // Check the fixed bits of the control byte, Bus::sendTelegram() does not validate them.
+    if ((assembleBuffer[0] & VALID_ANY_DATA_FRAME_TYPE_MASK) != VALID_ANY_DATA_FRAME_TYPE_VALUE)
     {
         return false;
     }
 
-    return length == (assembleBuffer[LPDU_STD_LENGTH_OCTET] & LPDU_STD_LENGTH_MASK) + LPDU_STD_OVERHEAD;
+    // telegramSize() excludes the checksum octet.
+    return length == telegramSize(assembleBuffer) + 1;
 }
 
 void TpUartEmulator::rejectFrame()
@@ -309,7 +310,8 @@ void TpUartEmulator::submitFrame(const uint16_t length)
     // A transceiver has to put the frame on the bus verbatim, so adopt the source
     // address of this frame first. This is what makes tunneling with several
     // individual addresses work.
-    bcu.setOwnAddress(makeWord(txFrame[1], txFrame[2]));
+    const auto source = (frameType(txFrame) == FRAME_STANDARD) ? LPDU_STD_SOURCE_OCTET : LPDU_EXT_SOURCE_OCTET;
+    bcu.setOwnAddress(makeWord(txFrame[source], txFrame[source + 1]));
 
     // The last octet is the checksum, sblib recalculates and appends it.
     bcu.bus->sendTelegram(txFrame, static_cast<uint16_t>(length - 1));

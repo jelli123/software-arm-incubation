@@ -115,10 +115,20 @@ OpenKNX-Stack (`_isEcho`) verwerfen das Echo ohnehin.
 BUSY (je 3×). Nur bei Zeitüberschreitung (`TPUART_TX_CONFIRM_TIMEOUT_MS`, 400 ms)
 kommt `0x0B` plus gesetztes `TRANSMIT_ERROR` im nächsten `U_State.ind`.
 
-### 4. Nur Standard-Frames
+### 4. Extended Frames bis 64 Oktette
 
-Die `Bus`-Zustandsmaschine von `sblib` implementiert aktuell keine Extended Frames. Frames mit gelöschtem Bit 7 im Kontrollbyte werden mit negativem `L_Data.con` und
-`PROTOCOL_ERROR` abgewiesen.
+Standard- und Extended Frames werden in beide Richtungen übertragen. Ein Frame
+darf einschließlich Prüfsumme höchstens 64 Oktette lang sein
+(`TPUART_MAX_FRAME_SIZE`), ein Extended Frame trägt damit eine APDU von bis zu
+**55 Oktetten**. Der Host muss seine maximale APDU-Länge entsprechend
+begrenzen. Längere Frames vom Host werden mit negativem `L_Data.con` und
+`PROTOCOL_ERROR` abgewiesen, längere Frames vom Bus werden nicht quittiert und
+nicht weitergereicht.
+
+Extended Frames setzen eine `sblib` mit Extended-Frame-Unterstützung im `Bus`
+voraus (Branch `feature/extended-frames` in
+[jelli123/software-arm-lib](https://github.com/jelli123/software-arm-lib),
+Pull Request an `Darthyson/dev/lib-refactor`).
 
 ### 5. Quellandresse
 

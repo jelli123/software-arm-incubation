@@ -8,12 +8,14 @@
  */
 
 #include "bcu_tpuart.h"
+#include "tpuart_defs.h"
 
 BcuTpUart::BcuTpUart() : BcuTpUart(new UserRamBCU1())
 {
 }
 
-BcuTpUart::BcuTpUart(UserRamBCU1* userRamBcu1) : BcuBase(userRamBcu1, nullptr)
+// The receive buffer has to hold extended frames as well.
+BcuTpUart::BcuTpUart(UserRamBCU1* userRamBcu1) : BcuBase(userRamBcu1, nullptr, TPUART_MAX_FRAME_SIZE)
 {
 }
 
