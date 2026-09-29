@@ -42,25 +42,33 @@ Selfbus-Apps mit MCUXpresso gebaut:
 
 ### Host → Transceiver
 
-| Code                   | Service                         | Verhalten                                |
-| ---------------------- | ------------------------------- | ---------------------------------------- |
-| `0x01`                 | `U_Reset.req`                   | Reset, antwortet mit `0x03`              |
-| `0x02`                 | `U_State.req`                   | antwortet mit `U_State.ind`              |
-| `0x03` / `0x04`        | `U_SetBusy` / `U_QuitBusy`      | ACK auf dem Bus aus/ein                  |
-| `0x05`                 | `U_ActivateBusmon`              | Busmonitor, ACK aus (Ende nur per Reset) |
-| `0x08`–`0x0C`          | `U_L_DataOffset`                | Offset für Frames > 64 Byte              |
-| `0x0D`                 | `U_SystemState`                 | antwortet `0x4B` + Statusbyte            |
-| `0x0E` / `0x0F`        | `U_StopMode` / `U_ExitStopMode` | `bus.pause()` / `bus.resume()`           |
-| `0x10`–`0x17`          | `U_AckInformation`              | wird konsumiert, siehe *ACK-Verhalten*   |
-| `0x24` + 1 Byte        | `U_MxRstCnt`                    | Wiederholungszähler, wird konsumiert     |
-| `0x28` + 2 Byte        | `U_SetAddress` (knxd)           | setzt die eigene IA                      |
-| `0xF1` + 2 Byte        | `U_SetAddress` (OpenKNX)        | setzt die eigene IA                      |
-| `0x40`–`0x7F` + 1 Byte | `U_L_DataEnd`                   | letztes Frame-Oktett, löst Senden aus    |
-| `0x80`–`0xBF` + 1 Byte | `U_L_DataStart/Cont`            | Frame-Oktett n                           |
+| Code                   | Service                               | Verhalten                                |
+| ---------------------- | ------------------------------------- | ---------------------------------------- |
+| `0x01`                 | `U_Reset.req`                         | Reset, antwortet mit `0x03`              |
+| `0x02`                 | `U_State.req`                         | antwortet mit `U_State.ind`              |
+| `0x03` / `0x04`        | `U_SetBusy` / `U_QuitBusy` (NCN)      | ACK auf dem Bus aus/ein                  |
+| `0x05`                 | `U_ActivateBusmon`                    | Busmonitor, ACK aus (Ende nur per Reset) |
+| `0x08`–`0x0C`          | `U_L_DataOffset` (NCN)                | Offset für Frames > 64 Byte              |
+| `0x0E` / `0x0F`        | `U_StopMode` / `U_ExitStopMode` (NCN) | `bus.pause()` / `bus.resume()`           |
+| `0x10`–`0x17`          | `U_AckInformation`                    | wird konsumiert, siehe *ACK-Verhalten*   |
+| `0x24` + 1 Byte        | `U_MxRstCnt`                          | Wiederholungszähler, wird konsumiert     |
+| `0x28` + 2 Byte        | `U_SetAddress` (knxd)                 | setzt die eigene IA                      |
+| `0xF1` + 2 Byte        | `U_SetAddress` (NCN, OpenKNX)         | setzt die eigene IA                      |
+| `0x40`–`0x7F` + 1 Byte | `U_L_DataEnd`                         | letztes Frame-Oktett, löst Senden aus    |
+| `0x80`–`0xBF` + 1 Byte | `U_L_DataStart/Cont`                  | Frame-Oktett n                           |
 
-`U_ProductId`, `U_Configure`, `U_IntRegRd/Wr`, `U_SetRepetition` und unbekannte
-Codes werden inklusive ihrer Datenbytes verworfen, ohne den Parser zu
-desynchronisieren.
+Mit *(NCN)* markierte Services gibt es beim TP-UART 2 nicht, nur beim
+NCN5120/5130. Der OpenKNX-Stack sendet sie aber auch dann, wenn er ohne
+`NCN5120` für einen TP-UART gebaut ist (`requestBusy()`, `stop()`,
+`requestConfig()`). Der Emulator versteht sie deshalb zusätzlich.
+
+`U_SystemState` (`0x0D`) beantwortet der Emulator dagegen nicht: Der Service
+liefert nur beim NCN ein Statusbyte über dessen Versorgungsspannungen, ein
+TP-UART 2 kennt ihn nicht.
+
+`U_SystemState`, `U_ProductId`, `U_Configure`, `U_IntRegRd/Wr`,
+`U_SetRepetition` und unbekannte Codes werden inklusive ihrer Datenbytes
+verworfen, ohne den Parser zu desynchronisieren.
 
 `U_State.req` und `U_SetAddress` sind **Pflicht**:
 Der OpenKNX-Stack sendet beide sekündlich (`requestState()`/`requestConfig()`) und erklärt die Verbindung nach 5 s ohne Antwort für tot – ab dann verwirft er jedes
@@ -73,8 +81,7 @@ Knxd nutzt `U_State.req` als 10-s-Keepalive.
 | --------------- | ------------------------------ |
 | `0x03`          | `U_Reset.ind`                  |
 | `0x07` \| Flags | `U_State.ind`                  |
-| `0x2B`          | `U_StopMode.ind`               |
-| `0x4B` + 1 Byte | `U_SystemStat.ind`             |
+| `0x2B`          | `U_StopMode.ind` (NCN)         |
 | `0x8B` / `0x0B` | `L_Data.con` positiv / negativ |
 | Rohframe        | `L_Data.ind` inkl. Prüfsumme   |
 

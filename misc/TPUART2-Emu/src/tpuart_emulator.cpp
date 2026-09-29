@@ -175,11 +175,6 @@ void TpUartEmulator::handleHostService(const uint8_t cmd, const uint8_t* data)
         bcu.setLinkLayerActive(false);
         break;
 
-    case U_SYSTEM_STATE_REQ:
-        queueByte(U_SYSTEM_STAT_IND);
-        queueByte(static_cast<uint8_t>(stopMode));
-        break;
-
     case U_STOP_MODE_REQ:
         if (!stopMode)
         {
@@ -203,9 +198,11 @@ void TpUartEmulator::handleHostService(const uint8_t cmd, const uint8_t* data)
         break;
 
     default:
-        // U_ProductId, U_Configure, U_IntRegRd/Wr, U_MxRstCnt, U_SetRepetition
-        // and anything unknown are silently accepted. Their data octets, if any,
-        // have already been consumed by hostServiceDataLength().
+        // U_SystemState, U_ProductId, U_Configure, U_IntRegRd/Wr, U_MxRstCnt,
+        // U_SetRepetition and anything unknown are silently accepted. Their data
+        // octets, if any, have already been consumed by hostServiceDataLength().
+        // U_SystemState is not answered: only an NCN512x reports its supply
+        // voltages this way, a TP-UART 2 does not know the service.
         break;
     }
 }

@@ -25,7 +25,7 @@ enum TpUartHostService : uint8_t
     U_QUIT_BUSY_REQ         = 0x04, //!< resume acknowledging received frames
     U_BUSMON_REQ            = 0x05, //!< enter bus monitor mode (leave via reset)
     U_L_DATA_OFFSET_REQ     = 0x08, //!< 0x08..0x0C, offset = cmd & 0x07, unit 64 byte
-    U_SYSTEM_STATE_REQ      = 0x0D, //!< request @ref U_SYSTEM_STAT_IND
+    U_SYSTEM_STATE_REQ      = 0x0D, //!< NCN512x only, not answered
     U_STOP_MODE_REQ         = 0x0E, //!< detach from the bus
     U_EXIT_STOP_MODE_REQ    = 0x0F, //!< re-attach to the bus
     U_ACK_INFORMATION_REQ   = 0x10, //!< 0x10..0x17, see @ref TpUartAckInformation
@@ -73,8 +73,7 @@ enum TpUartControllerService : uint8_t
     L_DATA_CON_SUCCESS  = 0x80, //!< positive confirmation
     U_RESET_IND         = 0x03, //!< answer to @ref U_RESET_REQ
     U_STATE_IND         = 0x07, //!< answer to @ref U_STATE_REQ, or'ed with error flags
-    U_STOP_MODE_IND     = 0x2B, //!< answer to @ref U_STOP_MODE_REQ
-    U_SYSTEM_STAT_IND   = 0x4B  //!< answer to @ref U_SYSTEM_STATE_REQ, plus one data byte
+    U_STOP_MODE_IND     = 0x2B  //!< answer to @ref U_STOP_MODE_REQ
 };
 
 /**
