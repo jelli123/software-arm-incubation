@@ -30,15 +30,19 @@ enum TpUartHostService : uint8_t
     U_EXIT_STOP_MODE_REQ    = 0x0F, //!< re-attach to the bus
     U_ACK_INFORMATION_REQ   = 0x10, //!< 0x10..0x17, see @ref TpUartAckInformation
     U_CONFIGURE_REQ         = 0x18, //!< 0x18..0x1F, NCN512x only, ignored
-    U_PRODUCT_ID_REQ        = 0x20, //!< product id request, ignored
+    U_PRODUCT_ID_REQ        = 0x20, //!< request @ref TPUART_PRODUCT_ID
+    U_ACTIVATE_BUSY_MODE_REQ = 0x21, //!< stop acknowledging addressed frames for @ref TPUART_BUSY_MODE_MS
+    U_RESET_BUSY_MODE_REQ   = 0x22, //!< end the busy mode immediately
     U_MXRSTCNT_REQ          = 0x24, //!< 0x24 + repetition byte, TP-UART 2 only
+    U_ACTIVATE_CRC_REQ      = 0x25, //!< append a CRC16-CCITT to every L_Data.ind
     U_SET_ADDRESS_REQ       = 0x28, //!< 0x28 + addrHigh + addrLow (used by knxd)
     U_INT_REG_WR_REQ        = 0x29, //!< 0x29..0x2B, NCN512x only, ignored
     U_INT_REG_RD_REQ        = 0x38, //!< 0x38..0x3B, NCN512x only, ignored
     U_L_DATA_END_REQ        = 0x40, //!< 0x40..0x7F, last byte of a frame
     U_L_DATA_START_CONT_REQ = 0x80, //!< 0x80..0xBF, byte n of a frame
+    U_POLLING_STATE_REQ     = 0xE0, //!< 0xE0..0xEE + pollAddrHigh + pollAddrLow + state, ignored
     U_SET_ADDRESS_REQ_ALT   = 0xF1, //!< 0xF1 + addrHigh + addrLow (used by OpenKNX)
-    U_SET_REPETITION_REQ    = 0xF2  //!< 0xF2 + repetition byte
+    U_SET_REPETITION_REQ    = 0xF2  //!< 0xF2 + repetition byte + 2 dummy bytes, NCN512x only
 };
 
 constexpr uint8_t U_L_DATA_OFFSET_REQ_MAX     = 0x0C; //!< last code of @ref U_L_DATA_OFFSET_REQ
@@ -46,6 +50,7 @@ constexpr uint8_t U_ACK_INFORMATION_REQ_MAX   = 0x17; //!< last code of @ref U_A
 constexpr uint8_t U_INT_REG_WR_REQ_MAX        = 0x2B; //!< last code of @ref U_INT_REG_WR_REQ
 constexpr uint8_t U_L_DATA_END_REQ_MAX        = 0x7F; //!< last code of @ref U_L_DATA_END_REQ
 constexpr uint8_t U_L_DATA_START_CONT_REQ_MAX = 0xBF; //!< last code of @ref U_L_DATA_START_CONT_REQ
+constexpr uint8_t U_POLLING_STATE_REQ_MAX     = 0xEE; //!< last code of @ref U_POLLING_STATE_REQ
 
 constexpr uint8_t U_L_DATA_OFFSET_MASK = 0x07; //!< offset part of @ref U_L_DATA_OFFSET_REQ
 constexpr uint8_t U_L_DATA_INDEX_MASK  = 0x3F; //!< octet index part of U_L_DataStart/Cont/End
@@ -87,6 +92,19 @@ enum TpUartStateFlags : uint8_t
     TPUART_PROTOCOL_ERROR      = 0x10,
     TPUART_TEMPERATURE_WARNING = 0x08
 };
+
+/** Answer to @ref U_PRODUCT_ID_REQ: product id 2, revision 1 (TP-UART 2, release a). */
+constexpr uint8_t TPUART_PRODUCT_ID = 0x41;
+/** Duration of the busy mode started by @ref U_ACTIVATE_BUSY_MODE_REQ. */
+constexpr uint32_t TPUART_BUSY_MODE_MS = 700;
+/**
+ * Initial value of the CRC16-CCITT enabled by @ref U_ACTIVATE_CRC_REQ.
+ * The data sheet specifies init value FFFFh for the augmented algorithm (test string
+ * "123456789" gives E5CCh). The direct algorithm used here needs 1D0Fh for the same result.
+ */
+constexpr uint16_t TPUART_CRC_INIT = 0x1D0F;
+/** Polynomial of the CRC16-CCITT enabled by @ref U_ACTIVATE_CRC_REQ. */
+constexpr uint16_t TPUART_CRC_POLYNOMIAL = 0x1021;
 
 /**
  * Maximum size of a KNX frame including its checksum octet. Also the size of

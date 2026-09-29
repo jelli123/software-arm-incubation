@@ -45,6 +45,8 @@ private:
 
     void handleReset();
     void handleStateRequest();
+    void indicateState(uint8_t flags);
+    void updateLinkLayer();
     void handleDataOctet(uint16_t index, uint8_t data);
     void handleFrameEnd(uint16_t index, uint8_t data);
     [[nodiscard]] bool isSendableFrame(uint16_t length) const;
@@ -54,7 +56,11 @@ private:
     void pollHost();
     void pollKnxReceive();
     void pollKnxTransmit();
+    void pollBusyMode();
     void pollLeds();
+
+    /** CRC16-CCITT as appended by @ref U_ACTIVATE_CRC_REQ. */
+    static uint16_t crc16Ccitt(const uint8_t* data, uint16_t length);
 
     [[nodiscard]] bool queueFree(uint16_t count) const;
     void queueByte(uint8_t data);
@@ -65,7 +71,7 @@ private:
 
     // Host service parser
     uint8_t cmdByte;                //!< service code currently being collected
-    uint8_t cmdData[2];             //!< data octets of the current service
+    uint8_t cmdData[3];             //!< data octets of the current service
     uint8_t cmdDataLen;             //!< number of data octets collected so far
     uint8_t cmdDataExpected;        //!< number of data octets still to collect
 
@@ -84,9 +90,12 @@ private:
     uint32_t lastTxByteTime;        //!< millis() of the last octet sent to the host
 
     bool    busMonitorMode;         //!< set by U_BusmonReq, cleared by reset only
-    bool    busyMode;               //!< set by U_SetBusyReq
+    bool    busyMode;               //!< set by U_SetBusyReq (NCN512x)
     bool    stopMode;               //!< set by U_StopModeReq
+    bool    crcMode;                //!< set by U_ActivateCRC, cleared by reset only
     uint8_t errorFlags;             //!< latched flags for the next U_State.ind
+
+    Timeout busyModeTimeout;        //!< runs while the busy mode of U_ActivateBusyMode is active
 
     Timeout knxRxLed;               //!< switches the KNX-Rx LED off again
     Timeout hostRxLed;              //!< switches the Serial-Rx LED off again

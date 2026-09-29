@@ -50,25 +50,31 @@ Selfbus-Apps mit MCUXpresso gebaut:
 | `0x05`                 | `U_ActivateBusmon`                    | Busmonitor, ACK aus (Ende nur per Reset) |
 | `0x08`–`0x0C`          | `U_L_DataOffset` (NCN)                | Offset für Frames > 64 Byte              |
 | `0x0E` / `0x0F`        | `U_StopMode` / `U_ExitStopMode` (NCN) | `bus.pause()` / `bus.resume()`           |
-| `0x10`–`0x17`          | `U_AckInformation`                    | wird konsumiert, siehe *ACK-Verhalten*   |
+| `0x10`–`0x17`          | `U_AckInformation`                    | konsumiert, siehe *ACK-Verhalten*; beendet den Busy-Modus |
+| `0x20`                 | `U_ProductID.req`                     | antwortet mit `0x41` (TP-UART 2, Release a) |
+| `0x21` / `0x22`        | `U_ActivateBusyMode` / `U_ResetBusyMode` | 700 ms kein ACK, siehe *Busy-Modus*   |
 | `0x24` + 1 Byte        | `U_MxRstCnt`                          | Wiederholungszähler, wird konsumiert     |
+| `0x25`                 | `U_ActivateCRC`                       | CRC16 an jedes `L_Data.ind` (nicht im Busmonitor) |
 | `0x28` + 2 Byte        | `U_SetAddress` (knxd)                 | setzt die eigene IA                      |
 | `0xF1` + 2 Byte        | `U_SetAddress` (NCN, OpenKNX)         | setzt die eigene IA                      |
 | `0x40`–`0x7F` + 1 Byte | `U_L_DataEnd`                         | letztes Frame-Oktett, löst Senden aus    |
 | `0x80`–`0xBF` + 1 Byte | `U_L_DataStart/Cont`                  | Frame-Oktett n                           |
+| `0xE0`–`0xEE` + 3 Byte | `U_PollingState`                      | konsumiert, `sblib` kennt keine Poll-Frames |
 
 Mit *(NCN)* markierte Services gibt es beim TP-UART 2 nicht, nur beim
 NCN5120/5130. Der OpenKNX-Stack sendet sie aber auch dann, wenn er ohne
 `NCN5120` für einen TP-UART gebaut ist (`requestBusy()`, `stop()`,
 `requestConfig()`). Der Emulator versteht sie deshalb zusätzlich.
 
-`U_SystemState` (`0x0D`) beantwortet der Emulator dagegen nicht: Der Service
-liefert nur beim NCN ein Statusbyte über dessen Versorgungsspannungen, ein
-TP-UART 2 kennt ihn nicht.
+Alle anderen Codes beantwortet der Emulator wie ein TP-UART 2 mit einer
+`U_State.ind` mit gesetztem Protocol-Error-Bit (`0x17`). Das gilt auch für die
+übrigen NCN-Services `U_SystemState` (`0x0D`), `U_Configure`, `U_IntRegRd/Wr`
+und `U_SetRepetition`. Ihre Datenbytes werden dabei verbraucht, damit der
+Parser synchron bleibt.
 
-`U_SystemState`, `U_ProductId`, `U_Configure`, `U_IntRegRd/Wr`,
-`U_SetRepetition` und unbekannte Codes werden inklusive ihrer Datenbytes
-verworfen, ohne den Parser zu desynchronisieren.
+Mit `U_ActivateCRC` hängt der Emulator an jedes empfangene Telegramm eine
+CRC16-CCITT über das komplette Telegramm inklusive Prüfsumme an (High-Byte
+zuerst, Prüfwert für „123456789“: `0xE5CC`). Ein Reset schaltet sie wieder ab.
 
 `U_State.req` und `U_SetAddress` sind **Pflicht**:
 Der OpenKNX-Stack sendet beide sekündlich (`requestState()`/`requestConfig()`) und erklärt die Verbindung nach 5 s ohne Antwort für tot – ab dann verwirft er jedes
@@ -80,10 +86,11 @@ Knxd nutzt `U_State.req` als 10-s-Keepalive.
 | Code            | Service                        |
 | --------------- | ------------------------------ |
 | `0x03`          | `U_Reset.ind`                  |
-| `0x07` \| Flags | `U_State.ind`                  |
+| `0x07` \| Flags | `U_State.ind`, bei Receive- oder Protocol-Error auch unaufgefordert |
 | `0x2B`          | `U_StopMode.ind` (NCN)         |
+| `0x41`          | `U_ProductID.response`         |
 | `0x8B` / `0x0B` | `L_Data.con` positiv / negativ |
-| Rohframe        | `L_Data.ind` inkl. Prüfsumme   |
+| Rohframe        | `L_Data.ind` inkl. Prüfsumme, nach `U_ActivateCRC` plus 2 Byte CRC |
 
 ---
 
@@ -161,6 +168,14 @@ Resynchronisation.
 Auf `0` setzen für ungedrosselte Ausgabe, wenn der Host Bursts verträgt
 (knxd und der aktuelle OpenKNX-Stack tun das; beim alten Stack zusätzlich
 `-DOVERRUN_COUNT=64` setzen).
+
+### 7. Busy-Modus ohne BUSY-Quittung
+
+Ein echter TP-UART 2 quittiert nach `U_ActivateBusyMode` 700 ms lang
+adressierte Telegramme mit BUSY. `sblib` kann keine BUSY-Quittung senden, der
+Emulator quittiert in dieser Zeit deshalb gar nicht. Der Sender wiederholt das
+Telegramm in beiden Fällen. Wie beim echten Baustein beenden
+`U_ResetBusyMode`, `U_AckInformation` und `U_Reset` den Busy-Modus vorzeitig.
 
 ---
 
