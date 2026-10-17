@@ -18,9 +18,11 @@
 
 #include "bcu_tpuart.h"
 #include "config.h"
+#include "emu_version.h"
 #include "tpuart_emulator.h"
 
-APP_VERSION("SBtpuart", "0", "01") // Don't forget to also change the build-variable sw_version
+// Set in emu_version.h. Don't forget to also change the build-variable sw_version.
+APP_VERSION(TPUART_EMU_APP_NAME, TPUART_EMU_VERSION_MAJOR, TPUART_EMU_VERSION_MINOR)
 
 BcuTpUart bcuTpUart = BcuTpUart();      //!< the bus coupling unit
 TpUartEmulator tpUart(bcuTpUart);       //!< the TP-UART host protocol emulation

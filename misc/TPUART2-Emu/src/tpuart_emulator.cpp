@@ -13,9 +13,11 @@
 #include <sblib/eib/bus_const.h>
 #include <sblib/eib/knx_lpdu.h>
 #include <sblib/eib/knx_npdu.h>
+#include <sblib/version.h>
 
 #include <cstring>
 
+#include "emu_version.h"
 #include "tpuart_defs.h"
 #include "tpuart_emulator.h"
 
@@ -193,6 +195,10 @@ void TpUartEmulator::handleHostService(const uint8_t cmd, const uint8_t* data)
         queueByte(TPUART_PRODUCT_ID);
         break;
 
+    case U_EMU_IDENTIFY_REQ:
+        handleIdentify();
+        break;
+
     case U_ACTIVATE_BUSY_MODE_REQ:
         // A real TP-UART 2 acknowledges addressed frames with BUSY. sblib can't
         // send a BUSY acknowledge, so the emulator doesn't acknowledge at all.
@@ -282,6 +288,33 @@ void TpUartEmulator::handleStateRequest()
 {
     queueByte(static_cast<uint8_t>(U_STATE_IND | errorFlags));
     errorFlags = 0;
+}
+
+void TpUartEmulator::handleIdentify()
+{
+    uint8_t answer[TPUART_EMU_IDENTIFY_LENGTH + 3] = {
+        U_EMU_IDENTIFY_REQ,
+        TPUART_EMU_IDENTIFY_LENGTH,
+        TPUART_EMU_IDENTIFY_FORMAT,
+        TPUART_EMU_MAJOR,
+        TPUART_EMU_MINOR,
+        static_cast<uint8_t>(SBLIB_VERSION >> 8),
+        static_cast<uint8_t>(SBLIB_VERSION),
+        TPUART_MAX_FRAME_SIZE
+    };
+    constexpr uint8_t nameOctet = 8;
+    memcpy(answer + nameOctet, TPUART_EMU_APP_NAME, sizeof(TPUART_EMU_APP_NAME) - 1);
+
+    constexpr uint8_t checksumOctet = sizeof(answer) - 1;
+    uint8_t checksum = 0;
+    for (uint8_t i = 0; i < checksumOctet; i++)
+    {
+        checksum ^= answer[i];
+    }
+    answer[checksumOctet] = static_cast<uint8_t>(~checksum);
+
+    // Queued as one block, so no telegram from the bus can end up in between.
+    queueBytes(answer, sizeof(answer));
 }
 
 void TpUartEmulator::indicateState(const uint8_t flags)

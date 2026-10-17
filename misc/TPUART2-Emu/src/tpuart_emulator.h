@@ -45,6 +45,7 @@ private:
 
     void handleReset();
     void handleStateRequest();
+    void handleIdentify();
     void indicateState(uint8_t flags);
     void updateLinkLayer();
     void handleDataOctet(uint16_t index, uint8_t data);

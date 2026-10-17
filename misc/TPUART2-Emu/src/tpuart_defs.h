@@ -42,7 +42,8 @@ enum TpUartHostService : uint8_t
     U_L_DATA_START_CONT_REQ = 0x80, //!< 0x80..0xBF, byte n of a frame
     U_POLLING_STATE_REQ     = 0xE0, //!< 0xE0..0xEE + pollAddrHigh + pollAddrLow + state, ignored
     U_SET_ADDRESS_REQ_ALT   = 0xF1, //!< 0xF1 + addrHigh + addrLow (used by OpenKNX)
-    U_SET_REPETITION_REQ    = 0xF2  //!< 0xF2 + repetition byte + 2 dummy bytes, NCN512x only
+    U_SET_REPETITION_REQ    = 0xF2, //!< 0xF2 + repetition byte + 2 dummy bytes, NCN512x only
+    U_EMU_IDENTIFY_REQ      = 0xFE  //!< Selfbus extension, request @ref TpUartEmuIdentify
 };
 
 constexpr uint8_t U_L_DATA_OFFSET_REQ_MAX     = 0x0C; //!< last code of @ref U_L_DATA_OFFSET_REQ
@@ -91,6 +92,34 @@ enum TpUartStateFlags : uint8_t
     TPUART_TRANSMIT_ERROR      = 0x20,
     TPUART_PROTOCOL_ERROR      = 0x10,
     TPUART_TEMPERATURE_WARNING = 0x08
+};
+
+/**
+ * Answer to @ref U_EMU_IDENTIFY_REQ, a Selfbus extension.
+ *
+ * Tells a host that the transceiver is this emulator and which firmware it
+ * runs - a real TP-UART 2 answers the request with a protocol error, and to
+ * @ref U_PRODUCT_ID_REQ the emulator answers exactly like one. All octets are
+ * sent as one block, telegrams from the bus never come in between.
+ *
+ * | Octet | Content                                                   |
+ * | ----- | --------------------------------------------------------- |
+ * | 0     | @ref U_EMU_IDENTIFY_REQ, as start of the answer           |
+ * | 1     | number of the octets 2..n-2 (@ref TPUART_EMU_IDENTIFY_LENGTH) |
+ * | 2     | format of the answer (@ref TPUART_EMU_IDENTIFY_FORMAT)    |
+ * | 3, 4  | firmware version, major and minor                         |
+ * | 5, 6  | sblib version, high and low octet of SBLIB_VERSION        |
+ * | 7     | longest frame incl. checksum (@ref TPUART_MAX_FRAME_SIZE) |
+ * | 8..15 | application name, 8 ASCII characters                      |
+ * | n-1   | checksum: all octets before it XOR'ed, then inverted      |
+ *
+ * A host has to accept a longer answer of a later format and ignore the
+ * octets it does not know; their number is in octet 1.
+ */
+enum TpUartEmuIdentify : uint8_t
+{
+    TPUART_EMU_IDENTIFY_FORMAT = 1,  //!< format described above
+    TPUART_EMU_IDENTIFY_LENGTH = 14  //!< octets 2..15
 };
 
 /** Answer to @ref U_PRODUCT_ID_REQ: product id 2, revision 1 (TP-UART 2, release a). */

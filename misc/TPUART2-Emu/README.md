@@ -60,6 +60,7 @@ Selfbus-Apps mit MCUXpresso gebaut:
 | `0x40`–`0x7F` + 1 Byte | `U_L_DataEnd`                         | letztes Frame-Oktett, löst Senden aus    |
 | `0x80`–`0xBF` + 1 Byte | `U_L_DataStart/Cont`                  | Frame-Oktett n                           |
 | `0xE0`–`0xEE` + 3 Byte | `U_PollingState`                      | konsumiert, `sblib` kennt keine Poll-Frames |
+| `0xFE`                 | `U_EmuIdentify.req` (Selfbus)         | antwortet mit Version, siehe *Erkennung* |
 
 Mit *(NCN)* markierte Services gibt es beim TP-UART 2 nicht, nur beim
 NCN5120/5130. Der OpenKNX-Stack sendet sie aber auch dann, wenn er ohne
@@ -71,6 +72,30 @@ Alle anderen Codes beantwortet der Emulator wie ein TP-UART 2 mit einer
 übrigen NCN-Services `U_SystemState` (`0x0D`), `U_Configure`, `U_IntRegRd/Wr`
 und `U_SetRepetition`. Ihre Datenbytes werden dabei verbraucht, damit der
 Parser synchron bleibt.
+
+### Erkennung
+
+Auf `U_ProductID.req` antwortet der Emulator wie ein echter TP-UART 2 mit
+`0x41`. Daran allein kann ein Host ihn also nicht vom Original unterscheiden.
+Dafür gibt es den herstellerspezifischen Service `U_EmuIdentify.req` (`0xFE`),
+den weder TP-UART 2 noch NCN512x kennen – beide antworten mit einem
+Protocol-Error (`0x17`). Der Emulator antwortet am Stück, ohne dass ein
+Telegramm vom Bus dazwischenkommt:
+
+| Oktett | Inhalt                                                    |
+| ------ | --------------------------------------------------------- |
+| 0      | `0xFE`                                                    |
+| 1      | Anzahl der Oktette 2 … n-2, derzeit `14`                  |
+| 2      | Format der Antwort, derzeit `1`                           |
+| 3, 4   | Firmware-Version Major, Minor (z. B. `0`, `10` = 0.10)    |
+| 5, 6   | `SBLIB_VERSION`, High- und Low-Byte (z. B. `0x02 0x11`)   |
+| 7      | längster Frame inkl. Prüfsumme (`64`)                     |
+| 8 … 15 | Anwendungsname, 8 ASCII-Zeichen (`SBtpuart`)              |
+| n-1    | Prüfsumme: alle Oktette davor XOR, dann invertiert        |
+
+Ein Host muss eine längere Antwort eines späteren Formats annehmen und die
+Oktette überspringen, die er nicht kennt. Die Version steht an einer Stelle,
+in [src/emu_version.h](src/emu_version.h).
 
 Mit `U_ActivateCRC` hängt der Emulator an jedes empfangene Telegramm eine
 CRC16-CCITT über das komplette Telegramm inklusive Prüfsumme an (High-Byte
@@ -89,6 +114,7 @@ Knxd nutzt `U_State.req` als 10-s-Keepalive.
 | `0x07` \| Flags | `U_State.ind`, bei Receive- oder Protocol-Error auch unaufgefordert |
 | `0x2B`          | `U_StopMode.ind` (NCN)         |
 | `0x41`          | `U_ProductID.response`         |
+| `0xFE` …        | `U_EmuIdentify.res` (Selfbus), 17 Byte |
 | `0x8B` / `0x0B` | `L_Data.con` positiv / negativ |
 | Rohframe        | `L_Data.ind` inkl. Prüfsumme, nach `U_ActivateCRC` plus 2 Byte CRC |
 

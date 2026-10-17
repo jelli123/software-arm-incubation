@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(TPUART2-Emu LANGUAGES CXX VERSION 0.01)
+project(TPUART2-Emu LANGUAGES CXX VERSION 0.10)
 
 set(CMAKE_VERBOSE_MAKEFILE ON CACHE BOOL "Enable verbose output from the build system")
 set(CMAKE_CXX_STANDARD 17)
