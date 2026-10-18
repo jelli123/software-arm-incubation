@@ -1,0 +1,82 @@
+# Funktionstest auf dem Bus
+
+[knx_function_test.py](knx_function_test.py) prüft den TP-UART-2-Emulator an
+einer echten KNX-TP1-Linie. Das Skript spricht den Emulator als TP-UART-Host
+an. Über einen KNXnet/IP-Tunnel zu einem KNX/IP-Interface an derselben Linie
+liest es mit, was auf dem Bus ankommt, und sendet selbst. Die Telegramme
+vergleicht es in beiden Richtungen Oktett für Oktett.
+
+```
+             seriell 19200 8E1                KNX TP1
+Test-PC ───────────────────────── TPUART2-Emu ═══════════ KNX/IP-Interface
+   │                                                              │
+   └───────────────────── KNXnet/IP-Tunnel (UDP 3671) ────────────┘
+```
+
+Das KNX/IP-Interface kann jedes beliebige sein. Getestet ist es mit dem
+Selfbus KNX/IP-Interface (ESP32), das selbst einen TPUART2-Emu enthält.
+
+## Voraussetzungen
+
+* Python 3.8 oder neuer mit `pyserial` (`pip install pyserial`)
+* der Emulator an einem USB-Seriell-Adapter, 3,3 V TTL
+* ein KNX/IP-Interface mit freiem Tunnel an derselben Linie
+* Busspannung an beiden Geräten, **richtig gepolt**. Bei falscher Polung
+  meldet der Emulator trotzdem positive `L_Data.con` (siehe README, Abweichung 3),
+  aber keine Seite empfängt etwas, auch nicht im Busmonitor.
+
+Ein Adapter für Flash Magic steuert mit DTR und RTS die Leitungen `/RESET` und
+`PIO0_1`. Das Skript öffnet den Port mit beiden Leitungen inaktiv und wartet
+danach 2 s (`--boot`), denn schon das Öffnen setzt den LPC meist zurück.
+
+## Aufruf
+
+```
+./knx_function_test.py --port /dev/ttyACM0 --gateway 192.168.179.105
+```
+
+| Option           | Vorgabe           | Bedeutung                                          |
+| ---------------- | ----------------- | -------------------------------------------------- |
+| `--port`         | `/dev/ttyACM0`    | serieller Port des Emulators                       |
+| `--gateway`      | `192.168.179.105` | KNX/IP-Interface                                   |
+| `--gateway-port` | `3671`            | UDP-Port des Interfaces                            |
+| `--source`       | `1.1.200`         | physikalische Adresse, mit der der Emulator sendet |
+| `--group`        | `15/7/0`          | erste Gruppenadresse; benutzt werden +0 bis +21    |
+| `--burst`        | `30`              | Telegramme je Richtung in Abschnitt 7              |
+| `--boot`         | `2.0`             | Wartezeit nach dem Öffnen des Ports in Sekunden    |
+| `--no-extended`  | aus               | Extended Frames auslassen                          |
+
+Die Gruppenadressen sollten auf der Linie frei sein: Das Skript schreibt
+Testwerte darauf. Der Exit-Code ist 0, wenn alle Prüfungen bestehen.
+
+## Was geprüft wird
+
+1. **Host-Services:** `U_Reset`, `U_State`, `U_ProductID` (`0x41`),
+   `U_EmuIdentify` mit Prüfsumme, Firmware- und sblib-Version und längstem
+   Frame, `U_SystemState` mit Protocol Error, `U_SetAddress`.
+2. **Tunnel:** CONNECT und CONNECTIONSTATE zum KNX/IP-Interface.
+3. **Emu → Bus → IP:** Gruppentelegramme mit 1 Bit, 1, 2 und 14 Byte als
+   Standard Frame, Extended Frames mit 20 und 40 Byte und bis zum längsten
+   Frame, den `U_EmuIdentify` meldet (64 Oktette = 54 Byte Daten). Geprüft
+   werden ein positives `L_Data.con`, die Daten, die Quelladresse und der
+   Frametyp.
+4. **IP → Bus → Emu:** dieselben Telegramme in der Gegenrichtung. Geprüft
+   werden die Prüfsumme des TP-Frames, die Quelladresse (= Tunnel-PA) und das
+   positive `L_Data.con` am Tunnel.
+5. **Zu langer Frame vom Host:** wird mit `U_State` Protocol Error und
+   negativem `L_Data.con` abgewiesen und nicht gesendet.
+6. **CRC-Modus:** Nach `U_ActivateCRC` muss die CRC16 an jedem `L_Data.ind`
+   stimmen, `U_Reset` schaltet sie wieder ab.
+7. **Last:** je 30 Telegramme direkt hintereinander. In Richtung Emu → IP
+   kommt das nächste Frame erst nach dem `L_Data.con` des vorigen, wie bei
+   knxd. Alle müssen ankommen, in Richtung IP → Emu auch in der richtigen
+   Reihenfolge.
+
+## Ergebnisse deuten
+
+| Bild                                                         | Ursache                                                       |
+| ------------------------------------------------------------ | ------------------------------------------------------------- |
+| alle Telegramme fehlen, `L_Data.con` trotzdem positiv          | Bus ohne Spannung, verpolt oder nicht verbunden                  |
+| `U_ProductID`/`U_EmuIdentify` stumm, `U_SystemState` → `4B 00` | Emulator-Firmware älter als 0.10                               |
+| nur Extended Frames IP → Emu fehlen, `L_Data.con` negativ      | das KNX/IP-Interface sendet keine Extended Frames auf TP         |
+| erste Antwort nach dem Öffnen fehlt                          | LPC startet noch, `--boot` erhöhen                             |

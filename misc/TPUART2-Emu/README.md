@@ -38,6 +38,15 @@ Selfbus-Apps mit MCUXpresso gebaut:
 
 ---
 
+## Test
+
+[test/knx_function_test.py](test/knx_function_test.py) prüft den Emulator an
+einer echten Linie gegen ein KNX/IP-Interface: Host-Services, Standard- und
+Extended Frames in beide Richtungen, CRC-Modus und Last. Aufbau und Aufruf
+stehen in [test/README.md](test/README.md).
+
+---
+
 ## Unterstützte Services
 
 ### Host → Transceiver
