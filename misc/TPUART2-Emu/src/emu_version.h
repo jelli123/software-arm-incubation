@@ -20,7 +20,7 @@
 /** Major version, exactly 1 digit. */
 #define TPUART_EMU_VERSION_MAJOR "0"
 /** Minor version, exactly 2 digits. */
-#define TPUART_EMU_VERSION_MINOR "11"
+#define TPUART_EMU_VERSION_MINOR "12"
 
 static_assert(sizeof(TPUART_EMU_APP_NAME) == 8 + 1, "APP_VERSION needs an app name of 8 characters");
 static_assert(sizeof(TPUART_EMU_VERSION_MAJOR) == 1 + 1, "APP_VERSION needs a major version of 1 digit");

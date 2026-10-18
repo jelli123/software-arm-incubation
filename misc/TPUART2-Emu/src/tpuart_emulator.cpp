@@ -47,7 +47,10 @@ TpUartEmulator::TpUartEmulator(BcuTpUart& bcuTpUart) :
     busyMode(false),
     stopMode(false),
     crcMode(false),
-    errorFlags(0)
+    errorFlags(0),
+    transceiverStatus(TPUART_SYSTEM_VBUS | TPUART_SYSTEM_VDD2),
+    rawTransceiverStatus(TPUART_SYSTEM_VBUS | TPUART_SYSTEM_VDD2),
+    rawStatusChangeTime(0)
 {
 }
 
@@ -56,11 +59,27 @@ void TpUartEmulator::begin()
     lastTxByteTime = millis();
     lastHostByteTime = lastTxByteTime;
     serial.setErrorCallback(onSerialError, this);
+
+#if TPUART_TRANSCEIVER_STATUS
+    pinMode(PIN_STKNX_VCC_OK, INPUT | PULL_UP);
+    pinMode(PIN_STKNX_KNX_OK, INPUT | PULL_UP);
+#endif
+    // Taken over as is: a bus that is already there at power up needs no debouncing.
+    transceiverStatus = readTransceiverStatus();
+    rawTransceiverStatus = transceiverStatus;
+    rawStatusChangeTime = lastTxByteTime;
     updateLinkLayer();
+
+    // Set the level first, so the pin does not pass through "ready" on its way to an output.
+    updateReadyPin();
+#if TPUART_READY_OUTPUT
+    pinMode(PIN_LPC_READY, OUTPUT);
+#endif
 }
 
 void TpUartEmulator::loop()
 {
+    pollTransceiverStatus();
     pollHostRate();
     pollHost();
     pollKnxTransmit();
@@ -189,6 +208,10 @@ void TpUartEmulator::handleHostService(const uint8_t cmd, const uint8_t* data)
         handleStateRequest();
         break;
 
+    case U_SYSTEM_STATE_REQ:
+        handleSystemStateRequest();
+        break;
+
     case U_SET_BUSY_REQ:
         busyMode = true;
         updateLinkLayer();
@@ -262,7 +285,7 @@ void TpUartEmulator::handleHostService(const uint8_t cmd, const uint8_t* data)
 
     default:
         // Like a real TP-UART 2 report a protocol error for services it does not
-        // know, e.g. U_SystemState, U_Configure, U_IntRegRd/Wr and U_SetRepetition
+        // know, e.g. U_Configure, U_IntRegRd/Wr and U_SetRepetition
         // of an NCN512x. Their data octets, if any, have already been consumed by
         // hostServiceDataLength(), so the parser stays in sync.
         indicateState(TPUART_PROTOCOL_ERROR);
@@ -315,6 +338,26 @@ void TpUartEmulator::handleStateRequest()
     errorFlags = 0;
 }
 
+void TpUartEmulator::handleSystemStateRequest()
+{
+    uint8_t mode = TPUART_SYSTEM_MODE_NORMAL;
+    if (!transceiverReady())
+    {
+        mode = TPUART_SYSTEM_MODE_POWERUP;
+    }
+    else if (stopMode)
+    {
+        mode = TPUART_SYSTEM_MODE_STOP;
+    }
+
+    const uint8_t answer[] = {
+        U_SYSTEM_STAT_IND,
+        static_cast<uint8_t>(TPUART_SYSTEM_XTAL | TPUART_SYSTEM_VFILT | TPUART_SYSTEM_V20V |
+                             transceiverStatus | mode)
+    };
+    queueBytes(answer, sizeof(answer));
+}
+
 void TpUartEmulator::handleIdentify()
 {
     uint8_t answer[TPUART_EMU_IDENTIFY_LENGTH + 3] = {
@@ -330,7 +373,10 @@ void TpUartEmulator::handleIdentify()
     constexpr uint8_t nameOctet = 8;
     memcpy(answer + nameOctet, TPUART_EMU_APP_NAME, sizeof(TPUART_EMU_APP_NAME) - 1);
     constexpr uint8_t featureOctet = nameOctet + sizeof(TPUART_EMU_APP_NAME) - 1;
-    answer[featureOctet] = TPUART_EMU_FEATURE_CONFIGURE;
+    answer[featureOctet] = TPUART_EMU_FEATURE_CONFIGURE | TPUART_EMU_FEATURE_SYSTEM_STATE;
+#if TPUART_READY_OUTPUT
+    answer[featureOctet] |= TPUART_EMU_FEATURE_READY;
+#endif
     answer[featureOctet + 1] = TPUART_EMU_RATE_MAX;
 
     constexpr uint8_t checksumOctet = sizeof(answer) - 1;
@@ -439,7 +485,9 @@ void TpUartEmulator::indicateState(const uint8_t flags)
 void TpUartEmulator::updateLinkLayer()
 {
     const bool busyModeActive = busyMode || busyModeTimeout.started();
-    bcu.setLinkLayerActive(!busMonitorMode && !busyModeActive);
+    // Nothing is acknowledged while the transceiver is not ready either: what
+    // sblib receives then comes from a line that is going down or not up yet.
+    bcu.setLinkLayerActive(!busMonitorMode && !busyModeActive && transceiverReady());
 }
 
 void TpUartEmulator::handleDataOctet(const uint16_t index, const uint8_t data)
@@ -500,6 +548,15 @@ void TpUartEmulator::submitFrame(const uint16_t length)
         return;
     }
 
+    if (!transceiverReady())
+    {
+        // No bus: confirm negatively right away instead of after the
+        // confirmation timeout, like a failed transmission.
+        errorFlags |= TPUART_TRANSMIT_ERROR;
+        queueByte(L_DATA_CON);
+        return;
+    }
+
     memcpy(txFrame, assembleBuffer, length);
 
     // Bus::prepareTelegram() overwrites the sender address with bcu->ownAddress().
@@ -540,6 +597,13 @@ void TpUartEmulator::pollKnxReceive()
 {
     if (!bcu.bus->telegramReceived())
     {
+        return;
+    }
+
+    if (!transceiverReady())
+    {
+        // Comes from a line that is going down or not up yet.
+        bcu.bus->discardReceivedTelegram();
         return;
     }
 
@@ -620,6 +684,67 @@ void TpUartEmulator::pollBusyMode()
     {
         updateLinkLayer();
     }
+}
+
+uint8_t TpUartEmulator::readTransceiverStatus()
+{
+#if TPUART_TRANSCEIVER_STATUS
+    uint8_t status = 0;
+    if (digitalRead(PIN_STKNX_KNX_OK))
+    {
+        status |= TPUART_SYSTEM_VBUS;
+    }
+    if (digitalRead(PIN_STKNX_VCC_OK))
+    {
+        status |= TPUART_SYSTEM_VDD2;
+    }
+    return status;
+#else
+    return TPUART_SYSTEM_VBUS | TPUART_SYSTEM_VDD2;
+#endif
+}
+
+bool TpUartEmulator::transceiverReady() const
+{
+    constexpr uint8_t ready = TPUART_SYSTEM_VBUS | TPUART_SYSTEM_VDD2;
+    return (transceiverStatus & ready) == ready;
+}
+
+void TpUartEmulator::updateReadyPin() const
+{
+#if TPUART_READY_OUTPUT
+    digitalWrite(PIN_LPC_READY, !transceiverReady()); // active low
+#endif
+}
+
+void TpUartEmulator::pollTransceiverStatus()
+{
+    const uint8_t raw = readTransceiverStatus();
+    const uint32_t now = millis();
+    if (raw != rawTransceiverStatus)
+    {
+        rawTransceiverStatus = raw;
+        rawStatusChangeTime = now;
+        return;
+    }
+
+    if ((raw == transceiverStatus) ||
+        (static_cast<uint32_t>(now - rawStatusChangeTime) < TPUART_STATUS_DEBOUNCE_MS))
+    {
+        return;
+    }
+
+    const bool wasReady = transceiverReady();
+    transceiverStatus = raw;
+    if (transceiverReady() == wasReady)
+    {
+        return; // e.g. VCC_OK came back while KNX_OK is still low
+    }
+
+    // A telegram sblib took from the line while it went down or came up is garbage.
+    bcu.bus->discardReceivedTelegram();
+    updateLinkLayer();
+    updateReadyPin();
 }
 
 uint16_t TpUartEmulator::crc16Ccitt(const uint8_t* data, const uint16_t length)

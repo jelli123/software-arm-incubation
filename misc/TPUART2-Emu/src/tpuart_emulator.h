@@ -47,6 +47,7 @@ private:
     /** Everything a reset does, except answering with U_Reset.ind. */
     void resetState();
     void handleStateRequest();
+    void handleSystemStateRequest();
     void handleIdentify();
     void handleConfigure(const uint8_t* data);
     void indicateState(uint8_t flags);
@@ -63,6 +64,14 @@ private:
     void pollBusyMode();
     void pollLeds();
     void pollHostRate();
+    void pollTransceiverStatus();
+
+    /** Current, not debounced state of the STKNX power good outputs. */
+    static uint8_t readTransceiverStatus();
+    /** Transceiver can talk to the bus: VCC_OK and KNX_OK, debounced. */
+    [[nodiscard]] bool transceiverReady() const;
+    /** Drive /LPC_READY from @ref transceiverReady. */
+    void updateReadyPin() const;
 
     /** Baud rate of a @ref TpUartEmuRate code. */
     static SerialBaudRate baudRate(uint8_t rateCode);
@@ -116,6 +125,11 @@ private:
     bool    stopMode;               //!< set by U_StopModeReq
     bool    crcMode;                //!< set by U_ActivateCRC, cleared by reset only
     uint8_t errorFlags;             //!< latched flags for the next U_State.ind
+
+    // STKNX power good outputs, see TPUART_TRANSCEIVER_STATUS
+    uint8_t  transceiverStatus;     //!< debounced, TPUART_SYSTEM_VBUS | TPUART_SYSTEM_VDD2
+    uint8_t  rawTransceiverStatus;  //!< last state read from the pins
+    uint32_t rawStatusChangeTime;   //!< millis() when rawTransceiverStatus changed
 
     Timeout busyModeTimeout;        //!< runs while the busy mode of U_ActivateBusyMode is active
 

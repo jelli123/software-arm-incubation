@@ -55,6 +55,56 @@
 #   define PIN_TPUART_SERIAL_RX     (PIO1_6)
 #endif
 
+#ifndef TPUART_TRANSCEIVER_STATUS
+/**
+ * Watch the power good outputs of an STKNX transceiver, see
+ * @ref PIN_STKNX_VCC_OK and @ref PIN_STKNX_KNX_OK.
+ *
+ * Without them (0) the transceiver is always taken as ready. Both inputs have
+ * the internal pull-up enabled, so an unconnected pin reads as "good" anyway.
+ */
+#   define TPUART_TRANSCEIVER_STATUS (1)
+#endif
+
+#ifndef PIN_STKNX_VCC_OK
+/**
+ * VCC_OK of the STKNX, CMOS output, high while VCCCORE is in range. Only then
+ * are KNX_RX and KNX_TX of the STKNX usable.
+ */
+#   define PIN_STKNX_VCC_OK         (PIO2_7)
+#endif
+
+#ifndef PIN_STKNX_KNX_OK
+/** KNX_OK of the STKNX, CMOS output, high while the bus voltage is present. */
+#   define PIN_STKNX_KNX_OK         (PIO1_11)
+#endif
+
+#ifndef TPUART_STATUS_DEBOUNCE_MS
+/**
+ * How long VCC_OK and KNX_OK must be stable before a change is taken over,
+ * in milliseconds. The STKNX has a hysteresis of its own, this only rides
+ * out the bouncing of a bus being plugged in.
+ */
+#   define TPUART_STATUS_DEBOUNCE_MS (50)
+#endif
+
+#ifndef TPUART_READY_OUTPUT
+/**
+ * Drive @ref PIN_LPC_READY. 0 leaves the pin untouched, for boards that use
+ * it for something else.
+ */
+#   define TPUART_READY_OUTPUT      (1)
+#endif
+
+#ifndef PIN_LPC_READY
+/**
+ * /LPC_READY towards the host, active low: driven low while the emulator runs
+ * and the transceiver is ready (VCC_OK and KNX_OK). While the LPC is in reset,
+ * in the ISP or still booting, the reset pull-up of the pin keeps it high.
+ */
+#   define PIN_LPC_READY            (PIO2_6)
+#endif
+
 #ifndef TPUART_BAUDRATE
 /** Host interface baud rate. A real TP-UART 2 runs at 19200 baud, 8E1. */
 #   define TPUART_BAUDRATE          (SERIAL_BAUD_RATE_19200)

@@ -35,12 +35,15 @@ U_EMU_CONFIGURE_REQ = 0xFD
 U_EMU_IDENTIFY_REQ = 0xFE
 
 EMU_FEATURE_CONFIGURE = 0x01
+EMU_FEATURE_SYSTEM_STATE = 0x04
 EMU_FLAG_BURST     = 0x01
 EMU_RATES          = [19200, 38400, 57600, 115200]  # rate codes of U_EmuConfigure
 
 U_RESET_IND        = 0x03
 U_STATE_IND        = 0x07
 U_STATE_PE         = 0x10  # protocol error bit of U_State.ind
+U_SYSTEM_STAT_IND  = 0x4B
+SYSTEM_STATE_READY = 0xFB  # XTAL VFILT VBUS VDD2 V20V, no TW, mode normal
 TPUART_PRODUCT_ID  = 0x41
 L_DATA_CON_POS     = 0x8B
 L_DATA_CON_NEG     = 0x0B
@@ -436,8 +439,13 @@ class FunctionTest:
         check("U_EmuIdentify.req -> Antwort mit gültiger Prüfsumme", ok, info)
 
         tp.write([U_SYSTEM_STATE_REQ])
-        r = tp.read_n(1)
-        check("U_SystemState (NCN) -> Protocol Error 0x17", r == bytes([U_STATE_IND | U_STATE_PE]), hexs(r))
+        if self.features & EMU_FEATURE_SYSTEM_STATE:
+            r = tp.read_n(2)
+            check("U_SystemState -> 0x4B, Bus und VCC ok, Mode normal",
+                  r == bytes([U_SYSTEM_STAT_IND, SYSTEM_STATE_READY]), hexs(r))
+        else:
+            r = tp.read_n(1)
+            check("U_SystemState (NCN) -> Protocol Error 0x17", r == bytes([U_STATE_IND | U_STATE_PE]), hexs(r))
 
         tp.write(bytes([U_SET_ADDRESS_REQ]) + struct.pack(">H", self.src))
         r = tp.read_for(0.2)

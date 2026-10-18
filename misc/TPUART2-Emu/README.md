@@ -19,7 +19,13 @@ Die KNX-Seite (Bit-Timing, Kollisionsauflösung, ACK, Wiederholungen) übernimmt
 | ------------------------- | ---- |
 | `PIN_TX` (Default PIO1_7) | RX   |
 | `PIN_RX` (Default PIO1_6) | TX   |
+| `PIN_LPC_READY` (Default PIO2_6) | GPIO, optional, siehe *Busspannung* |
 | GND                       | GND  |
+
+| SB-Interface (LPC1115)       | STKNX    |
+| ---------------------------- | -------- |
+| `PIN_STKNX_VCC_OK` (Default PIO2_7)  | `VCC_OK` |
+| `PIN_STKNX_KNX_OK` (Default PIO1_11) | `KNX_OK` |
 
 Pegel: 3,3 V TTL. Pins sind in [src/config.h](src/config.h) änderbar.
 
@@ -58,6 +64,7 @@ stehen in [test/README.md](test/README.md).
 | `0x03` / `0x04`        | `U_SetBusy` / `U_QuitBusy` (NCN)      | ACK auf dem Bus aus/ein                  |
 | `0x05`                 | `U_ActivateBusmon`                    | Busmonitor, ACK aus (Ende nur per Reset) |
 | `0x08`–`0x0C`          | `U_L_DataOffset` (NCN)                | Offset für Frames > 64 Byte              |
+| `0x0D`                 | `U_SystemState.req` (NCN)             | antwortet mit `U_SystemStat.ind`, siehe *Busspannung* |
 | `0x0E` / `0x0F`        | `U_StopMode` / `U_ExitStopMode` (NCN) | `bus.pause()` / `bus.resume()`           |
 | `0x10`–`0x17`          | `U_AckInformation`                    | konsumiert, siehe *ACK-Verhalten*; beendet den Busy-Modus |
 | `0x20`                 | `U_ProductID.req`                     | antwortet mit `0x41` (TP-UART 2, Release a) |
@@ -79,7 +86,7 @@ NCN5120/5130. Der OpenKNX-Stack sendet sie aber auch dann, wenn er ohne
 
 Alle anderen Codes beantwortet der Emulator wie ein TP-UART 2 mit einer
 `U_State.ind` mit gesetztem Protocol-Error-Bit (`0x17`). Das gilt auch für die
-übrigen NCN-Services `U_SystemState` (`0x0D`), `U_Configure`, `U_IntRegRd/Wr`
+übrigen NCN-Services `U_Configure`, `U_IntRegRd/Wr`
 und `U_SetRepetition`. Ihre Datenbytes werden dabei verbraucht, damit der
 Parser synchron bleibt.
 
@@ -101,7 +108,7 @@ Telegramm vom Bus dazwischenkommt:
 | 5, 6   | `SBLIB_VERSION`, High- und Low-Byte (z. B. `0x02 0x11`)   |
 | 7      | längster Frame inkl. Prüfsumme (`64`)                     |
 | 8 … 15 | Anwendungsname, 8 ASCII-Zeichen (`SBtpuart`)              |
-| 16     | Features (ab Format 2): Bit 0 = `U_EmuConfigure`           |
+| 16     | Features (ab Format 2): Bit 0 = `U_EmuConfigure`, Bit 1 = `/LPC_READY` wird getrieben, Bit 2 = `U_SystemState` (ab 0.12) |
 | 17     | höchster Raten-Code von `U_EmuConfigure` (ab Format 2), `3` |
 | n-1    | Prüfsumme: alle Oktette davor XOR, dann invertiert        |
 
@@ -158,6 +165,52 @@ Der OpenKNX-Stack sendet beide sekündlich (`requestState()`/`requestConfig()`) 
 `L_Data.req` stillschweigend.
 Knxd nutzt `U_State.req` als 10-s-Keepalive.
 
+### Busspannung
+
+Ab Version 0.12 wertet der Emulator die beiden Power-good-Ausgänge des STKNX
+aus (CMOS, High = in Ordnung):
+
+* `VCC_OK`: VCCCORE ist im Sollbereich, erst dann sind `KNX_RX` und `KNX_TX`
+  des STKNX nutzbar.
+* `KNX_OK`: die Busspannung ist da.
+
+Beide werden 50 ms entprellt (`TPUART_STATUS_DEBOUNCE_MS`). Bereit ist der
+Transceiver nur, wenn beide High sind. Solange er es nicht ist,
+
+* reicht der Emulator nichts vom Bus weiter und quittiert nichts – was
+  `sblib` beim Ab- oder Aufbau der Spannung vom Bus liest, ist Müll;
+* bestätigt er jedes `L_Data.req` sofort negativ (`0x0B`) und setzt
+  `TRANSMIT_ERROR` im nächsten `U_State.ind`, statt 400 ms auf das Timeout
+  zu warten;
+* beantwortet er `U_State.req` weiter. Ein Host hielte ihn sonst nach 5 s für
+  tot und finge an, ihn neu zu initialisieren. Der LPC wird nicht aus dem Bus,
+  sondern vom Host versorgt und läuft weiter.
+
+`U_SystemState.req` (`0x0D`) beantwortet er wie ein NCN5120 mit `0x4B` und
+einem Statusbyte:
+
+| Bit | NCN5120 | Emulator                                   |
+| --- | ------- | ------------------------------------------ |
+| 7   | XTAL    | immer 1                                    |
+| 6   | VFILT   | immer 1                                    |
+| 5   | VBUS    | `KNX_OK`                                   |
+| 4   | VDD2    | `VCC_OK`                                   |
+| 3   | V20V    | immer 1                                    |
+| 2   | TW      | immer 0                                    |
+| 1–0 | Mode    | `00` nicht bereit, `10` Stop-Modus, `11` normal |
+
+Zusätzlich treibt er die Leitung **`/LPC_READY`** (PIO2_6, active low): Low,
+solange der Emulator läuft und der Transceiver bereit ist. Im Reset, im
+ISP-Bootloader und beim Booten hält der Reset-Pull-up des LPC sie High, ein
+Pull-up auf der Host-Seite schadet nicht. Ein Pull-down auf der Host-Seite
+dagegen kämpft gegen diesen Pull-up und ergibt keinen gültigen Pegel. Der Host
+erkennt so ohne Umweg über die UART, dass das LPC neu gestartet ist oder die
+Busspannung fehlt.
+
+Ohne STKNX `TPUART_TRANSCEIVER_STATUS` auf `0` setzen; unbeschaltete Eingänge
+lesen über ihren Pull-up ohnehin „in Ordnung“. `TPUART_READY_OUTPUT` auf `0`
+lässt PIO2_6 unberührt.
+
 ### Transceiver → Host
 
 | Code            | Service                        |
@@ -165,6 +218,7 @@ Knxd nutzt `U_State.req` als 10-s-Keepalive.
 | `0x03`          | `U_Reset.ind`                  |
 | `0x07` \| Flags | `U_State.ind`, bei Receive- oder Protocol-Error auch unaufgefordert |
 | `0x2B`          | `U_StopMode.ind` (NCN)         |
+| `0x4B` + 1 Byte | `U_SystemStat.ind` (NCN)       |
 | `0x41`          | `U_ProductID.response`         |
 | `0xFD` …        | `U_EmuConfigure.res` (Selfbus), 4 Byte |
 | `0xFE` …        | `U_EmuIdentify.res` (Selfbus), 19 Byte (Format 1: 17) |

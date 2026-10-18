@@ -25,7 +25,7 @@ enum TpUartHostService : uint8_t
     U_QUIT_BUSY_REQ         = 0x04, //!< resume acknowledging received frames
     U_BUSMON_REQ            = 0x05, //!< enter bus monitor mode (leave via reset)
     U_L_DATA_OFFSET_REQ     = 0x08, //!< 0x08..0x0C, offset = cmd & 0x07, unit 64 byte
-    U_SYSTEM_STATE_REQ      = 0x0D, //!< NCN512x only, not answered
+    U_SYSTEM_STATE_REQ      = 0x0D, //!< request @ref U_SYSTEM_STAT_IND (NCN512x service)
     U_STOP_MODE_REQ         = 0x0E, //!< detach from the bus
     U_EXIT_STOP_MODE_REQ    = 0x0F, //!< re-attach to the bus
     U_ACK_INFORMATION_REQ   = 0x10, //!< 0x10..0x17, see @ref TpUartAckInformation
@@ -80,7 +80,28 @@ enum TpUartControllerService : uint8_t
     L_DATA_CON_SUCCESS  = 0x80, //!< positive confirmation
     U_RESET_IND         = 0x03, //!< answer to @ref U_RESET_REQ
     U_STATE_IND         = 0x07, //!< answer to @ref U_STATE_REQ, or'ed with error flags
-    U_STOP_MODE_IND     = 0x2B  //!< answer to @ref U_STOP_MODE_REQ
+    U_STOP_MODE_IND     = 0x2B, //!< answer to @ref U_STOP_MODE_REQ
+    U_SYSTEM_STAT_IND   = 0x4B  //!< answer to @ref U_SYSTEM_STATE_REQ, followed by @ref TpUartSystemState
+};
+
+/**
+ * Second octet of @ref U_SYSTEM_STAT_IND, laid out as on an NCN5120.
+ *
+ * VBUS follows KNX_OK and VDD2 follows VCC_OK of the STKNX. The emulator does
+ * not monitor the other supplies and the crystal, those bits are always set.
+ */
+enum TpUartSystemState : uint8_t
+{
+    TPUART_SYSTEM_XTAL         = 0x80, //!< crystal oscillator in range
+    TPUART_SYSTEM_VFILT        = 0x40, //!< tank capacitor voltage in range
+    TPUART_SYSTEM_VBUS         = 0x20, //!< KNX bus voltage in range
+    TPUART_SYSTEM_VDD2         = 0x10, //!< DC2 regulator in range
+    TPUART_SYSTEM_V20V         = 0x08, //!< 20 V regulator in range
+    TPUART_SYSTEM_TW           = 0x04, //!< thermal warning
+    TPUART_SYSTEM_MODE_POWERUP = 0x00, //!< no communication with the bus
+    TPUART_SYSTEM_MODE_SYNC    = 0x01, //!< waiting for silence on the bus
+    TPUART_SYSTEM_MODE_STOP    = 0x02, //!< after @ref U_STOP_MODE_REQ
+    TPUART_SYSTEM_MODE_NORMAL  = 0x03  //!< fully functional
 };
 
 /**
@@ -130,7 +151,9 @@ enum TpUartEmuIdentify : uint8_t
  */
 enum TpUartEmuFeature : uint8_t
 {
-    TPUART_EMU_FEATURE_CONFIGURE = 0x01 //!< understands @ref U_EMU_CONFIGURE_REQ
+    TPUART_EMU_FEATURE_CONFIGURE    = 0x01, //!< understands @ref U_EMU_CONFIGURE_REQ
+    TPUART_EMU_FEATURE_READY        = 0x02, //!< drives /LPC_READY, see PIN_LPC_READY
+    TPUART_EMU_FEATURE_SYSTEM_STATE = 0x04  //!< answers @ref U_SYSTEM_STATE_REQ
 };
 
 /**

@@ -63,7 +63,8 @@ Testwerte darauf. Der Exit-Code ist 0, wenn alle Prüfungen bestehen.
 
 1. **Host-Services:** `U_Reset`, `U_State`, `U_ProductID` (`0x41`),
    `U_EmuIdentify` mit Prüfsumme, Firmware- und sblib-Version und längstem
-   Frame, `U_SystemState` mit Protocol Error, `U_SetAddress`.
+   Frame, `U_SystemState` (ab 0.12 `4B FB`: Bus und VCC in Ordnung, Mode
+   normal; davor Protocol Error), `U_SetAddress`.
 2. **Tunnel:** CONNECT und CONNECTIONSTATE zum KNX/IP-Interface.
 3. **Emu → Bus → IP:** Gruppentelegramme mit 1 Bit, 1, 2 und 14 Byte als
    Standard Frame, Extended Frames mit 20 und 40 Byte und bis zum längsten
@@ -93,6 +94,7 @@ Testwerte darauf. Der Exit-Code ist 0, wenn alle Prüfungen bestehen.
 | Bild                                                         | Ursache                                                       |
 | ------------------------------------------------------------ | ------------------------------------------------------------- |
 | alle Telegramme fehlen, `L_Data.con` trotzdem positiv          | Bus ohne Spannung, verpolt oder nicht verbunden                  |
+| `U_SystemState` → `4B C8`, `L_Data.con` sofort negativ         | ab 0.12: `KNX_OK`/`VCC_OK` des STKNX low – Bus ohne Spannung, oder Board ohne STKNX, dann `TPUART_TRANSCEIVER_STATUS=0` |
 | `U_ProductID`/`U_EmuIdentify` stumm, `U_SystemState` → `4B 00` | Emulator-Firmware älter als 0.10                               |
 | nur Extended Frames IP → Emu fehlen, `L_Data.con` negativ      | das KNX/IP-Interface sendet keine Extended Frames auf TP         |
 | erste Antwort nach dem Öffnen fehlt                          | LPC startet noch, `--boot` erhöhen                             |
