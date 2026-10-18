@@ -31,7 +31,12 @@ U_SYSTEM_STATE_REQ = 0x0D
 U_PRODUCT_ID_REQ   = 0x20
 U_ACTIVATE_CRC     = 0x25
 U_SET_ADDRESS_REQ  = 0x28
+U_EMU_CONFIGURE_REQ = 0xFD
 U_EMU_IDENTIFY_REQ = 0xFE
+
+EMU_FEATURE_CONFIGURE = 0x01
+EMU_FLAG_BURST     = 0x01
+EMU_RATES          = [19200, 38400, 57600, 115200]  # rate codes of U_EmuConfigure
 
 U_RESET_IND        = 0x03
 U_STATE_IND        = 0x07
@@ -139,6 +144,23 @@ class TpUart:
 
     def close(self):
         self.s.close()
+
+    def set_baud(self, baud):
+        self.s.baudrate = baud
+
+    def configure(self, rate, flags):
+        """
+        U_EmuConfigure. The answer comes at the old rate, then both sides switch.
+
+        @return the answer octets; the port follows only on a valid answer
+        """
+        self.flush()
+        self.write([U_EMU_CONFIGURE_REQ, rate, flags])
+        r = self.read_n(4)
+        if len(r) == 4 and r[:3] == bytes([U_EMU_CONFIGURE_REQ, rate, flags]) and r[3] == checksum(r[:3]):
+            time.sleep(0.01)  # the emulator reopens its UART after the last octet
+            self.set_baud(EMU_RATES[rate])
+        return r
 
     def flush(self):
         time.sleep(0.05)
@@ -408,6 +430,9 @@ class FunctionTest:
             info = (f"Format {r[2]}, Firmware {r[3]}.{r[4]:02d}, sblib {r[5]:02X}{r[6]:02X}, "
                     f"max. Frame {r[7]}, '{r[8:16].decode(errors='replace')}'")
             self.max_frame = r[7]
+            if r[2] >= 2 and r[1] >= 16:
+                self.features, self.max_rate = r[16], r[17]
+                info += f", Features 0x{r[16]:02X}, max. Rate {EMU_RATES[r[17]] if r[17] < len(EMU_RATES) else r[17]}"
         check("U_EmuIdentify.req -> Antwort mit gültiger Prüfsumme", ok, info)
 
         tp.write([U_SYSTEM_STATE_REQ])
@@ -481,9 +506,67 @@ class FunctionTest:
             info += f", außerdem={extra}"
         self.res.check(f"{name}: IP -> Emu", status == 0 and ok and ok_con, info)
 
+    def host_rate(self):
+        tp, check = self.tp, self.res.check
+        print("\n== 8. Schnellere Rate (U_EmuConfigure) ==")
+        if not self.features & EMU_FEATURE_CONFIGURE:
+            print("  übersprungen: der Emulator meldet U_EmuConfigure nicht (vor 0.11)")
+            return
+        fast = min(self.max_rate, len(EMU_RATES) - 1)
+        baud = EMU_RATES[fast]
+
+        r = tp.configure(len(EMU_RATES), 0)
+        check("ungültige Rate -> Protocol Error, Rate bleibt", r[:1] == bytes([U_STATE_IND | U_STATE_PE]), hexs(r))
+        tp.write([U_STATE_REQ])
+        r = tp.read_n(1)
+        check("danach U_State.req bei 19200", r == bytes([U_STATE_IND]), hexs(r))
+
+        r = tp.configure(fast, EMU_FLAG_BURST)
+        check(f"Umschalten auf {baud} Baud ohne Drosselung", tp.s.baudrate == baud, hexs(r))
+        tp.write([U_STATE_REQ])
+        r = tp.read_n(1)
+        check(f"U_State.req bei {baud}", r == bytes([U_STATE_IND]), hexs(r))
+        tp.write([U_RESET_REQ])
+        r = tp.read_n(1)
+        tp.write([U_STATE_REQ])
+        r += tp.read_n(1)
+        check(f"U_Reset behält {baud} Baud", r == bytes([U_RESET_IND, U_STATE_IND]), hexs(r))
+        tp.write(bytes([U_SET_ADDRESS_REQ]) + struct.pack(">H", self.src))
+
+        self.ip_to_emu(f"{baud} Baud: 2 Byte", self.ga + 11, group_value_write([0x56, 0x78]), False)
+        if not self.args.no_extended:
+            ext_max = self.max_frame - LPDU_EXT_OVERHEAD - 1
+            self.ip_to_emu(f"{baud} Baud: Extended max.", self.ga + 12,
+                           group_value_write(bytes(range(ext_max))), True)
+            self.emu_to_ip(f"{baud} Baud: Extended max.", self.ga + 13,
+                           group_value_write(bytes(range(ext_max))), True)
+
+        # A host that talks at 19200 again: framing errors, back to 19200.
+        tp.set_baud(EMU_RATES[0])
+        back = b""
+        for _ in range(5):
+            tp.flush()
+            tp.write([U_RESET_REQ])
+            back = tp.read_n(1, 0.3)
+            if back == bytes([U_RESET_IND]):
+                break
+        check("Host bei 19200 -> Rückfall auf 19200 Baud", back == bytes([U_RESET_IND]), hexs(back))
+
+        # A host that goes quiet: back to 19200 after 5 s.
+        tp.configure(fast, EMU_FLAG_BURST)
+        switched = tp.s.baudrate == baud
+        time.sleep(6)
+        tp.set_baud(EMU_RATES[0])
+        tp.write([U_STATE_REQ])
+        r = tp.read_n(1)
+        check("5 s ohne Anfrage -> Rückfall auf 19200 Baud", switched and r == bytes([U_STATE_IND]), hexs(r))
+        tp.write(bytes([U_SET_ADDRESS_REQ]) + struct.pack(">H", self.src))
+
     def run(self):
         tp, tun, check = self.tp, self.tun, self.res.check
         self.max_frame = TP_MAX_FRAME
+        self.features = 0
+        self.max_rate = 0
         self.host_services()
 
         print("\n== 2. Tunnel ==")
@@ -575,6 +658,7 @@ class FunctionTest:
               f"{len(values)} empfangen, Reihenfolge {'ok' if values == expected else values}, "
               f"Tunnel-Acks {acks.count(0)}/{n}")
 
+        self.host_rate()
         return self.res.summary()
 
 

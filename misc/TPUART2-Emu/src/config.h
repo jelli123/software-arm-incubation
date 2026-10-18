@@ -82,8 +82,21 @@
  *
  * Set to 0 to send without pacing (higher throughput, needs a host that
  * tolerates bursts, e.g. knxd, or OpenKNX built with -DOVERRUN_COUNT=64).
+ * A host can also switch the pacing off at runtime with the burst flag of
+ * U_EmuConfigure, until the next fallback to 19200 baud.
  */
 #   define TPUART_TX_PACING_MS      (1)
+#endif
+
+#ifndef TPUART_EMU_RATE_IDLE_MS
+/**
+ * Time in milliseconds without a single octet from the host after which a
+ * rate set by U_EmuConfigure falls back to 19200 baud and paced output.
+ *
+ * The OpenKNX stack asks for the state once a second, knxd every 10 s; only a
+ * host that switched the rate has to keep below this, and both do.
+ */
+#   define TPUART_EMU_RATE_IDLE_MS  (5000)
 #endif
 
 #ifndef TPUART_TX_CONFIRM_TIMEOUT_MS

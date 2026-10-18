@@ -43,6 +43,7 @@ enum TpUartHostService : uint8_t
     U_POLLING_STATE_REQ     = 0xE0, //!< 0xE0..0xEE + pollAddrHigh + pollAddrLow + state, ignored
     U_SET_ADDRESS_REQ_ALT   = 0xF1, //!< 0xF1 + addrHigh + addrLow (used by OpenKNX)
     U_SET_REPETITION_REQ    = 0xF2, //!< 0xF2 + repetition byte + 2 dummy bytes, NCN512x only
+    U_EMU_CONFIGURE_REQ     = 0xFD, //!< Selfbus extension, 0xFD + rate + flags, see @ref TpUartEmuRate
     U_EMU_IDENTIFY_REQ      = 0xFE  //!< Selfbus extension, request @ref TpUartEmuIdentify
 };
 
@@ -111,6 +112,8 @@ enum TpUartStateFlags : uint8_t
  * | 5, 6  | sblib version, high and low octet of SBLIB_VERSION        |
  * | 7     | longest frame incl. checksum (@ref TPUART_MAX_FRAME_SIZE) |
  * | 8..15 | application name, 8 ASCII characters                      |
+ * | 16    | features, see @ref TpUartEmuFeature (format 2 and later)  |
+ * | 17    | highest rate code of @ref U_EMU_CONFIGURE_REQ (format 2)  |
  * | n-1   | checksum: all octets before it XOR'ed, then inverted      |
  *
  * A host has to accept a longer answer of a later format and ignore the
@@ -118,8 +121,54 @@ enum TpUartStateFlags : uint8_t
  */
 enum TpUartEmuIdentify : uint8_t
 {
-    TPUART_EMU_IDENTIFY_FORMAT = 1,  //!< format described above
-    TPUART_EMU_IDENTIFY_LENGTH = 14  //!< octets 2..15
+    TPUART_EMU_IDENTIFY_FORMAT = 2,  //!< format described above
+    TPUART_EMU_IDENTIFY_LENGTH = 16  //!< octets 2..17
+};
+
+/**
+ * Feature bits in octet 16 of the answer to @ref U_EMU_IDENTIFY_REQ.
+ */
+enum TpUartEmuFeature : uint8_t
+{
+    TPUART_EMU_FEATURE_CONFIGURE = 0x01 //!< understands @ref U_EMU_CONFIGURE_REQ
+};
+
+/**
+ * Rate codes of @ref U_EMU_CONFIGURE_REQ, a Selfbus extension.
+ *
+ * The host sends 0xFD, a rate code and @ref TpUartEmuConfigureFlags. The
+ * emulator answers at the old rate with 0xFD, rate, flags and a checksum (all
+ * octets before it XOR'ed, then inverted), and switches once that answer has
+ * left the UART. The host switches when it has the answer, and sends nothing
+ * in between. Invalid values are answered with a protocol error, nothing
+ * changes then.
+ *
+ * U_Reset.req keeps the rate, so the reset handshake of a host does not break
+ * the link. Back to @ref TPUART_EMU_RATE_19200 and paced output it goes on a
+ * framing, parity or break error and after @ref TPUART_EMU_RATE_IDLE_MS
+ * without a single octet from the host - which is what a host that restarted
+ * at 19200 baud causes on its first request.
+ *
+ * Only to be sent after @ref U_EMU_IDENTIFY_REQ reported
+ * @ref TPUART_EMU_FEATURE_CONFIGURE: an emulator before 0.11 and a real
+ * TP-UART would take the two data octets for services of their own.
+ */
+enum TpUartEmuRate : uint8_t
+{
+    TPUART_EMU_RATE_19200  = 0, //!< TP-UART 2 default, after power up
+    TPUART_EMU_RATE_38400  = 1,
+    TPUART_EMU_RATE_57600  = 2,
+    TPUART_EMU_RATE_115200 = 3,
+    TPUART_EMU_RATE_MAX    = TPUART_EMU_RATE_115200 //!< highest code, reported by U_EmuIdentify
+};
+
+/**
+ * Flags of @ref U_EMU_CONFIGURE_REQ.
+ */
+enum TpUartEmuConfigureFlags : uint8_t
+{
+    TPUART_EMU_FLAG_BURST = 0x01, //!< send to the host without pacing, see TPUART_TX_PACING_MS
+    TPUART_EMU_FLAGS_KNOWN = TPUART_EMU_FLAG_BURST
 };
 
 /** Answer to @ref U_PRODUCT_ID_REQ: product id 2, revision 1 (TP-UART 2, release a). */

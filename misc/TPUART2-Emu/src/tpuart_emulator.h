@@ -44,8 +44,11 @@ private:
     void handleHostService(uint8_t cmd, const uint8_t* data);
 
     void handleReset();
+    /** Everything a reset does, except answering with U_Reset.ind. */
+    void resetState();
     void handleStateRequest();
     void handleIdentify();
+    void handleConfigure(const uint8_t* data);
     void indicateState(uint8_t flags);
     void updateLinkLayer();
     void handleDataOctet(uint16_t index, uint8_t data);
@@ -59,6 +62,14 @@ private:
     void pollKnxTransmit();
     void pollBusyMode();
     void pollLeds();
+    void pollHostRate();
+
+    /** Baud rate of a @ref TpUartEmuRate code. */
+    static SerialBaudRate baudRate(uint8_t rateCode);
+    /** Open the host UART at @p rateCode and reset the host service parser. */
+    void applyHostRate(uint8_t rateCode, bool burst);
+    /** Called from the UART interrupt on framing, parity and break errors. */
+    static void onSerialError(uint8_t errorFlags, uint8_t faultyByte, void* context);
 
     /** CRC16-CCITT as appended by @ref U_ACTIVATE_CRC_REQ. */
     static uint16_t crc16Ccitt(const uint8_t* data, uint16_t length);
@@ -89,6 +100,16 @@ private:
     // Controller -> host
     RingBuffer txQueue;             //!< octets waiting to be sent to the host
     uint32_t lastTxByteTime;        //!< millis() of the last octet sent to the host
+
+    // Host UART rate, U_EmuConfigure
+    uint8_t  hostRate;              //!< current @ref TpUartEmuRate
+    bool     burstOutput;           //!< no pacing towards the host
+    bool     rateSwitchPending;     //!< switch once rateSwitchOctets have been sent
+    uint8_t  pendingRate;           //!< rate to switch to
+    bool     pendingBurst;          //!< pacing to switch to
+    uint16_t rateSwitchOctets;      //!< queued octets up to and including the answer
+    uint32_t lastHostByteTime;      //!< millis() of the last octet from the host
+    volatile bool serialLineError;  //!< set by onSerialError()
 
     bool    busMonitorMode;         //!< set by U_BusmonReq, cleared by reset only
     bool    busyMode;               //!< set by U_SetBusyReq (NCN512x)

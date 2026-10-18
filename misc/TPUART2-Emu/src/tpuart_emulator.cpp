@@ -35,6 +35,14 @@ TpUartEmulator::TpUartEmulator(BcuTpUart& bcuTpUart) :
     txStartTime(0),
     txQueue(TPUART_TX_QUEUE_SIZE),
     lastTxByteTime(0),
+    hostRate(TPUART_EMU_RATE_19200),
+    burstOutput(TPUART_TX_PACING_MS == 0),
+    rateSwitchPending(false),
+    pendingRate(TPUART_EMU_RATE_19200),
+    pendingBurst(false),
+    rateSwitchOctets(0),
+    lastHostByteTime(0),
+    serialLineError(false),
     busMonitorMode(false),
     busyMode(false),
     stopMode(false),
@@ -46,11 +54,14 @@ TpUartEmulator::TpUartEmulator(BcuTpUart& bcuTpUart) :
 void TpUartEmulator::begin()
 {
     lastTxByteTime = millis();
+    lastHostByteTime = lastTxByteTime;
+    serial.setErrorCallback(onSerialError, this);
     updateLinkLayer();
 }
 
 void TpUartEmulator::loop()
 {
+    pollHostRate();
     pollHost();
     pollKnxTransmit();
     pollKnxReceive();
@@ -78,6 +89,9 @@ uint8_t TpUartEmulator::hostServiceDataLength(const uint8_t cmd)
     // NOT built for the NCN512x (there the same setting uses 0xF2).
     case U_MXRSTCNT_REQ:
         return 1;
+
+    case U_EMU_CONFIGURE_REQ: // rate + flags
+        return 2;
 
     case U_SET_REPETITION_REQ: // NCN512x: repetition byte + 2 dummy bytes
         return 3;
@@ -199,6 +213,10 @@ void TpUartEmulator::handleHostService(const uint8_t cmd, const uint8_t* data)
         handleIdentify();
         break;
 
+    case U_EMU_CONFIGURE_REQ:
+        handleConfigure(data);
+        break;
+
     case U_ACTIVATE_BUSY_MODE_REQ:
         // A real TP-UART 2 acknowledges addressed frames with BUSY. sblib can't
         // send a BUSY acknowledge, so the emulator doesn't acknowledge at all.
@@ -254,6 +272,12 @@ void TpUartEmulator::handleHostService(const uint8_t cmd, const uint8_t* data)
 
 void TpUartEmulator::handleReset()
 {
+    resetState();
+    queueByte(U_RESET_IND);
+}
+
+void TpUartEmulator::resetState()
+{
     if (stopMode)
     {
         bcu.bus->resume();
@@ -270,8 +294,11 @@ void TpUartEmulator::handleReset()
     busyModeTimeout.stop();
     updateLinkLayer();
 
-    // Drop everything that is still queued towards the host.
+    // Drop everything that is still queued towards the host. A rate switch
+    // whose answer goes with it does not happen; the rate itself survives a
+    // reset, see U_EMU_CONFIGURE_REQ.
     txQueue.clear();
+    rateSwitchPending = false;
     bcu.bus->discardReceivedTelegram();
 
     if (txPending)
@@ -280,8 +307,6 @@ void TpUartEmulator::handleReset()
         // do not report its confirmation to the host after the reset.
         txSuppressCon = true;
     }
-
-    queueByte(U_RESET_IND);
 }
 
 void TpUartEmulator::handleStateRequest()
@@ -304,6 +329,9 @@ void TpUartEmulator::handleIdentify()
     };
     constexpr uint8_t nameOctet = 8;
     memcpy(answer + nameOctet, TPUART_EMU_APP_NAME, sizeof(TPUART_EMU_APP_NAME) - 1);
+    constexpr uint8_t featureOctet = nameOctet + sizeof(TPUART_EMU_APP_NAME) - 1;
+    answer[featureOctet] = TPUART_EMU_FEATURE_CONFIGURE;
+    answer[featureOctet + 1] = TPUART_EMU_RATE_MAX;
 
     constexpr uint8_t checksumOctet = sizeof(answer) - 1;
     uint8_t checksum = 0;
@@ -315,6 +343,91 @@ void TpUartEmulator::handleIdentify()
 
     // Queued as one block, so no telegram from the bus can end up in between.
     queueBytes(answer, sizeof(answer));
+}
+
+void TpUartEmulator::handleConfigure(const uint8_t* data)
+{
+    const uint8_t rate = data[0];
+    const uint8_t flags = data[1];
+    if ((rate > TPUART_EMU_RATE_MAX) || ((flags & ~TPUART_EMU_FLAGS_KNOWN) != 0))
+    {
+        indicateState(TPUART_PROTOCOL_ERROR);
+        return;
+    }
+
+    uint8_t answer[] = {U_EMU_CONFIGURE_REQ, rate, flags, 0};
+    answer[3] = static_cast<uint8_t>(~(answer[0] ^ answer[1] ^ answer[2]));
+    queueBytes(answer, sizeof(answer));
+
+    // Everything queued so far still goes out at the old rate, the answer last.
+    rateSwitchPending = true;
+    pendingRate = rate;
+    pendingBurst = (flags & TPUART_EMU_FLAG_BURST) != 0;
+    rateSwitchOctets = static_cast<uint16_t>(txQueue.available());
+}
+
+SerialBaudRate TpUartEmulator::baudRate(const uint8_t rateCode)
+{
+    switch (rateCode)
+    {
+    case TPUART_EMU_RATE_38400:
+        return SERIAL_BAUD_RATE_38400;
+    case TPUART_EMU_RATE_57600:
+        return SERIAL_BAUD_RATE_57600;
+    case TPUART_EMU_RATE_115200:
+        return SERIAL_BAUD_RATE_115200;
+    default:
+        return TPUART_BAUDRATE;
+    }
+}
+
+void TpUartEmulator::applyHostRate(const uint8_t rateCode, const bool burst)
+{
+    if (rateCode != hostRate)
+    {
+        // begin() waits until everything is out at the old rate, then starts
+        // over with empty buffers. What the host sent meanwhile is lost; it
+        // must not send anything before it has the answer anyway.
+        serial.begin(baudRate(rateCode), SERIAL_8E1);
+        hostRate = rateCode;
+    }
+    burstOutput = burst;
+    rateSwitchPending = false;
+    serialLineError = false;
+    cmdDataExpected = 0;
+    cmdDataLen = 0;
+    lastHostByteTime = millis();
+}
+
+void TpUartEmulator::onSerialError(const uint8_t errorFlags, uint8_t /*faultyByte*/, void* context)
+{
+    constexpr uint8_t mismatch = SERIAL_FRAME_ERROR | SERIAL_PARITY_ERROR | SERIAL_BREAK_INDICATION;
+    if ((errorFlags & mismatch) != 0)
+    {
+        static_cast<TpUartEmulator*>(context)->serialLineError = true;
+    }
+}
+
+void TpUartEmulator::pollHostRate()
+{
+    if (hostRate == TPUART_EMU_RATE_19200)
+    {
+        serialLineError = false;
+        return;
+    }
+
+    // A host talking at another rate produces framing and break errors with
+    // its very first octet, a host that is gone produces nothing at all.
+    const bool idle = static_cast<uint32_t>(millis() - lastHostByteTime) >= TPUART_EMU_RATE_IDLE_MS;
+    if (serialLineError || idle)
+    {
+        // The host is gone or starts over. Octets at the wrong rate may have
+        // slipped through as services (bus monitor, stop mode, ...), so return
+        // to the power-up state as a reset does, just without U_Reset.ind -
+        // a host coming back runs its reset handshake anyway.
+        resetState();
+        applyHostRate(TPUART_EMU_RATE_19200, TPUART_TX_PACING_MS == 0);
+    }
 }
 
 void TpUartEmulator::indicateState(const uint8_t flags)
@@ -406,8 +519,11 @@ void TpUartEmulator::submitFrame(const uint16_t length)
 void TpUartEmulator::pollHost()
 {
     int16_t data;
-    while ((data = serial.read()) >= 0)
+    // After a line error at a fast rate nothing more is taken as a service,
+    // pollHostRate() falls back to 19200 baud in the next round.
+    while (!(serialLineError && (hostRate != TPUART_EMU_RATE_19200)) && ((data = serial.read()) >= 0))
     {
+        lastHostByteTime = millis();
         hostRxLed.start(LED_BLINK_MS);
         digitalWrite(LED_SERIAL_RX, LED_ON);
         processHostByte(static_cast<uint8_t>(data));
@@ -569,23 +685,37 @@ void TpUartEmulator::queueBytes(const uint8_t* data, const uint16_t length)
 
 void TpUartEmulator::drainQueue()
 {
-    while (!txQueue.empty())
+    while (true)
     {
-#if (TPUART_TX_PACING_MS > 0)
-        if (static_cast<uint32_t>(millis() - lastTxByteTime) < TPUART_TX_PACING_MS)
+        if (rateSwitchPending && (rateSwitchOctets == 0))
+        {
+            // The answer to U_EmuConfigure is handed to the UART, switch now.
+            applyHostRate(pendingRate, pendingBurst);
+        }
+
+        if (txQueue.empty())
         {
             return;
         }
-#endif
+
+        if (!burstOutput && (static_cast<uint32_t>(millis() - lastTxByteTime) < TPUART_TX_PACING_MS))
+        {
+            return;
+        }
         if (serial.write(static_cast<uint8_t>(txQueue.peek())) != 1)
         {
             return; // serial write buffer is full, try again next round
         }
         static_cast<void>(txQueue.pop());
         lastTxByteTime = millis();
+        if (rateSwitchPending)
+        {
+            rateSwitchOctets--;
+        }
 
-#if (TPUART_TX_PACING_MS > 0)
-        return; // one octet per pacing interval
-#endif
+        if (!burstOutput)
+        {
+            return; // one octet per pacing interval
+        }
     }
 }

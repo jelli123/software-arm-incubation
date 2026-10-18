@@ -69,6 +69,7 @@ stehen in [test/README.md](test/README.md).
 | `0x40`–`0x7F` + 1 Byte | `U_L_DataEnd`                         | letztes Frame-Oktett, löst Senden aus    |
 | `0x80`–`0xBF` + 1 Byte | `U_L_DataStart/Cont`                  | Frame-Oktett n                           |
 | `0xE0`–`0xEE` + 3 Byte | `U_PollingState`                      | konsumiert, `sblib` kennt keine Poll-Frames |
+| `0xFD` + 2 Byte        | `U_EmuConfigure.req` (Selfbus)        | Rate und Drosselung, siehe *Schnellere Rate* |
 | `0xFE`                 | `U_EmuIdentify.req` (Selfbus)         | antwortet mit Version, siehe *Erkennung* |
 
 Mit *(NCN)* markierte Services gibt es beim TP-UART 2 nicht, nur beim
@@ -94,17 +95,59 @@ Telegramm vom Bus dazwischenkommt:
 | Oktett | Inhalt                                                    |
 | ------ | --------------------------------------------------------- |
 | 0      | `0xFE`                                                    |
-| 1      | Anzahl der Oktette 2 … n-2, derzeit `14`                  |
-| 2      | Format der Antwort, derzeit `1`                           |
+| 1      | Anzahl der Oktette 2 … n-2, derzeit `16`                  |
+| 2      | Format der Antwort, derzeit `2`                           |
 | 3, 4   | Firmware-Version Major, Minor (z. B. `0`, `10` = 0.10)    |
 | 5, 6   | `SBLIB_VERSION`, High- und Low-Byte (z. B. `0x02 0x11`)   |
 | 7      | längster Frame inkl. Prüfsumme (`64`)                     |
 | 8 … 15 | Anwendungsname, 8 ASCII-Zeichen (`SBtpuart`)              |
+| 16     | Features (ab Format 2): Bit 0 = `U_EmuConfigure`           |
+| 17     | höchster Raten-Code von `U_EmuConfigure` (ab Format 2), `3` |
 | n-1    | Prüfsumme: alle Oktette davor XOR, dann invertiert        |
 
 Ein Host muss eine längere Antwort eines späteren Formats annehmen und die
-Oktette überspringen, die er nicht kennt. Die Version steht an einer Stelle,
-in [src/emu_version.h](src/emu_version.h).
+Oktette überspringen, die er nicht kennt. Format 1 (Version 0.10) endet nach
+Oktett 15. Die Version steht an einer Stelle, in
+[src/emu_version.h](src/emu_version.h).
+
+### Schnellere Rate
+
+Ein TP-UART 2 spricht fest 19200 Baud, und jedes Frame-Oktett braucht vom Host
+zwei UART-Oktette. Ein Datentelegramm mit 23 Oktetten liegt damit 26 ms auf der
+UART, bevor es auf den Bus gehen kann. Beim Selfbus Updater ist das rund ein
+Drittel jedes Zyklus aus Anfrage und Antwort. Ab Version 0.11 kann der Host den
+Emulator deshalb umschalten:
+
+```
+Host  → 0xFD  Rate  Flags
+Emu   ← 0xFD  Rate  Flags  Prüfsumme      (noch mit der alten Rate)
+```
+
+| Rate | Baud   |
+| ---- | ------ |
+| `0`  | 19200 (Vorgabe nach dem Einschalten) |
+| `1`  | 38400  |
+| `2`  | 57600  |
+| `3`  | 115200 |
+
+Flag Bit 0 schaltet die Drosselung ab (siehe Abweichung 6). Der Emulator
+antwortet mit der alten Rate, nach allem, was schon in seiner Warteschlange
+lag, und schaltet um, sobald die Antwort die UART verlassen hat. Der Host
+schaltet um, wenn er die Antwort hat, und sendet bis dahin nichts. Ungültige
+Werte beantwortet der Emulator mit einem Protocol-Error (`0x17`), es ändert
+sich dann nichts.
+
+`U_Reset.req` behält Rate und Drosselung, damit der Reset-Handshake des Hosts
+die Verbindung nicht trennt. Zurück auf 19200 Baud mit Drosselung geht es
+
+* bei einem Rahmen-, Paritäts- oder Break-Fehler. Genau das erzeugt ein Host,
+  der nach einem Neustart wieder mit 19200 Baud anfragt, schon mit dem ersten
+  Oktett.
+* nach 5 s ohne ein einziges Oktett vom Host (`TPUART_EMU_RATE_IDLE_MS`).
+
+Der Dienst ist nur zu senden, wenn `U_EmuIdentify` Feature-Bit 0 meldet. Ein
+älterer Emulator und ein echter TP-UART würden die beiden Datenoktette als
+eigene Dienste auswerten.
 
 Mit `U_ActivateCRC` hängt der Emulator an jedes empfangene Telegramm eine
 CRC16-CCITT über das komplette Telegramm inklusive Prüfsumme an (High-Byte
@@ -123,7 +166,8 @@ Knxd nutzt `U_State.req` als 10-s-Keepalive.
 | `0x07` \| Flags | `U_State.ind`, bei Receive- oder Protocol-Error auch unaufgefordert |
 | `0x2B`          | `U_StopMode.ind` (NCN)         |
 | `0x41`          | `U_ProductID.response`         |
-| `0xFE` …        | `U_EmuIdentify.res` (Selfbus), 17 Byte |
+| `0xFD` …        | `U_EmuConfigure.res` (Selfbus), 4 Byte |
+| `0xFE` …        | `U_EmuIdentify.res` (Selfbus), 19 Byte (Format 1: 17) |
 | `0x8B` / `0x0B` | `L_Data.con` positiv / negativ |
 | Rohframe        | `L_Data.ind` inkl. Prüfsumme, nach `U_ActivateCRC` plus 2 Byte CRC |
 
@@ -190,8 +234,11 @@ byte-identisch. Dies ist eine Voraussetzung für Tunneling mit mehreren Individu
 
 `sblib` liefert ein Telegramm am Stück, ein echter TP-UART im Bustakt. Die
 Ausgabe wird deshalb auf **1 Oktett pro Millisekunde** gedrosselt
-(`TPUART_TX_PACING_MS`). Das kostet keinen Durchsatz – TP1 ist mit 9600 bit/s
-langsamer – und hält die Emulation dicht am Verhalten echter Hardware.
+(`TPUART_TX_PACING_MS`). Den Durchsatz begrenzt das nicht, TP1 ist mit 9600 bit/s
+langsamer. Die Emulation bleibt so dicht am Verhalten echter Hardware. Es kostet
+aber Latenz: Eine Antwort mit 11 Oktetten kommt 11 ms nach ihrem Empfang beim
+Host an statt nach 6 ms. Ein Host, der Bursts verträgt, schaltet die Drosselung
+deshalb mit `U_EmuConfigure` ab.
 
 Relevant ist das vor allem für die **alte** OpenKNX-Implementierung
 (`OpenKNX/knx`, `src/knx/tpuart_data_link_layer.cpp`). Sie verwirft den
