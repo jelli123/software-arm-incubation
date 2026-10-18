@@ -1,4 +1,14 @@
-# Funktionstest auf dem Bus
+# Tests auf dem Bus
+
+| Skript | Prüft |
+| --- | --- |
+| [knx_function_test.py](knx_function_test.py) | Funktion: Host-Services, Telegramme in beide Richtungen, CRC, Last, Ratenumschaltung |
+| [updater_benchmark.py](updater_benchmark.py) | Durchsatz im Ablauf des Selfbus Updaters, Zerlegung der Zykluszeit |
+
+Beide brauchen denselben Aufbau, siehe unten. `updater_benchmark.py` nutzt die
+Klassen von `knx_function_test.py` und muss im selben Ordner liegen.
+
+## Funktionstest
 
 [knx_function_test.py](knx_function_test.py) prüft den TP-UART-2-Emulator an
 einer echten KNX-TP1-Linie. Das Skript spricht den Emulator als TP-UART-Host
@@ -71,6 +81,12 @@ Testwerte darauf. Der Exit-Code ist 0, wenn alle Prüfungen bestehen.
    kommt das nächste Frame erst nach dem `L_Data.con` des vorigen, wie bei
    knxd. Alle müssen ankommen, in Richtung IP → Emu auch in der richtigen
    Reihenfolge.
+8. **Schnellere Rate** (ab Emulator 0.11, sonst übersprungen): ein ungültiger
+   `U_EmuConfigure` wird abgewiesen. Umschalten auf die höchste Rate ohne
+   Drosselung; `U_Reset` behält sie. Telegramme in beide Richtungen bis zum
+   längsten Extended Frame. Der Rückfall auf 19200 Baud erfolgt, sobald der
+   Host wieder mit 19200 anfragt und nach 5 s ohne Anfrage. Der Abschnitt
+   dauert gut 6 s.
 
 ## Ergebnisse deuten
 
@@ -80,3 +96,55 @@ Testwerte darauf. Der Exit-Code ist 0, wenn alle Prüfungen bestehen.
 | `U_ProductID`/`U_EmuIdentify` stumm, `U_SystemState` → `4B 00` | Emulator-Firmware älter als 0.10                               |
 | nur Extended Frames IP → Emu fehlen, `L_Data.con` negativ      | das KNX/IP-Interface sendet keine Extended Frames auf TP         |
 | erste Antwort nach dem Öffnen fehlt                          | LPC startet noch, `--boot` erhöhen                             |
+
+## Updater-Benchmark
+
+```
+./updater_benchmark.py --cycles 100 --monitor
+```
+
+Der Test-PC spielt auf beiden Seiten mit. Über den Tunnel sendet er, was der
+Selfbus Updater (Calimero) für `UPD_SEND_DATA` sendet: `T_Data_Connected` mit
+`A_UserMsg_Manufacturer_0`, Befehl und 13 Datenoktetten. Dann wartet er auf
+`T_ACK` und Antwort und quittiert die Antwort. Am Emulator spielt er den
+Bootloader. Der beantwortet jedes Datentelegramm sofort mit `T_ACK` und
+einer Antwort mit 11 Oktetten.
+
+| Option          | Vorgabe           | Bedeutung |
+| --------------- | ----------------- | --------- |
+| `--port`        | `/dev/ttyACM0`    | Emulator, der den Bootloader spielt |
+| `--gateway`     | `192.168.179.105` | KNX/IP-Interface |
+| `--device`      | `1.1.201`         | Adresse des simulierten Bootloaders |
+| `--cycles`      | `100`             | Anzahl Zyklen |
+| `--payload`     | `13`              | Datenoktette pro Telegramm, wie beim Updater |
+| `--device-fast` | aus               | Emulator am Test-PC auf seine höchste Rate ohne Drosselung (ab 0.11) |
+| `--monitor`     | aus               | Zyklus mit dem Busmonitor des Selfbus KNX/IP-Interface zerlegen |
+
+Ausgegeben werden Byte/s und der Median der Zeitpunkte im Zyklus. Mit
+`--monitor` kommen die Zeitpunkte am ESP32 hinzu, gemessen ab dem Moment, in
+dem das Datentelegramm vom Tunnel kommt.
+
+**Die Simulation ist langsamer als ein echter Bootloader.** Ihre Telegramme
+nehmen den Weg über die UART des Emulators, und ihre Antwort kann sie erst
+nach dem `L_Data.con` ihres `T_ACK` übergeben. Bei 19200 Baud kostet das rund
+50 ms pro Zyklus. Mit `--device-fast` schrumpft dieser Anteil. Für den
+Vergleich zwischen zwei Firmware-Ständen des Interfaces genügt das, solange die
+Geräteseite gleich bleibt. Die Zeit vom Datentelegramm bis zu seinem
+`L_Data.con` hängt nur am Interface.
+
+Gemessen am 18.10.2026, ESP32-Interface und Emulator 0.10, beide mit 19200 Baud:
+63,6 Byte/s mit Simulation, Zyklus 202 ms. Rechnet man den Anteil der Simulation
+heraus, ergeben sich rund 145 ms. Das sind rund 90 Byte/s, so viel, wie der
+Updater mit einem echten Gerät gemessen hat. Die Buszeit allein beträgt rund
+97 ms (≈ 130 Byte/s).
+
+Nach der Umstellung des Interfaces auf 115200 Baud ohne Drosselung
+(Emulator 0.11 auf beiden Seiten):
+
+| Messung | Byte/s | Zyklus | `L_Data.con` am Interface |
+| --- | --- | --- | --- |
+| Simulation bei 19200 Baud, wie oben | 77,9 | 162 ms | 53 ms (vorher 84 ms) |
+| Simulation mit `--device-fast` | 106,8 | 122 ms | 54 ms |
+
+Bei gleicher Geräteseite spart das Interface 40 ms pro Zyklus. Für ein echtes
+Gerät ergibt das geschätzt rund 120 Byte/s.
