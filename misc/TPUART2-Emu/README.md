@@ -260,7 +260,9 @@ OpenKNX-Stack (`_isEcho`) verwerfen das Echo ohnehin.
 (`TLayer4::finishedSendingTelegram()` ist nicht virtuell). Nach Abschluss der
 Übertragung wird `0x8B` gesendet. `sblib` wiederholt intern bereits bei NACK und
 BUSY (je 3×). Nur bei Zeitüberschreitung (`TPUART_TX_CONFIRM_TIMEOUT_MS`, 400 ms)
-kommt `0x0B` plus gesetztes `TRANSMIT_ERROR` im nächsten `U_State.ind`.
+kommt `0x0B`. `TRANSMIT_ERROR` setzt das Timeout nicht: Ein echter TP-UART 2
+meldet damit Bitfehler auf dem Bus, einen unquittierten Frame nur über das
+negative `L_Data.con`.
 
 ### 4. Extended Frames bis 64 Oktette
 

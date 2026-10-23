@@ -667,8 +667,9 @@ void TpUartEmulator::pollKnxTransmit()
 
     if (static_cast<uint32_t>(millis() - txStartTime) >= TPUART_TX_CONFIRM_TIMEOUT_MS)
     {
+        // Only the negative confirmation: a real TP-UART 2 reports a frame
+        // nobody acknowledged that way and keeps TE for bit errors on the bus.
         txPending = false;
-        errorFlags |= TPUART_TRANSMIT_ERROR;
         if (!txSuppressCon)
         {
             queueByte(L_DATA_CON);
