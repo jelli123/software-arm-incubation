@@ -135,6 +135,8 @@ enum TpUartStateFlags : uint8_t
  * | 8..15 | application name, 8 ASCII characters                      |
  * | 16    | features, see @ref TpUartEmuFeature (format 2 and later)  |
  * | 17    | highest rate code of @ref U_EMU_CONFIGURE_REQ (format 2)  |
+ * | 18..21| build id, first 8 hex digits of the Git commit, MSB first (format 3), 0 if unknown |
+ * | 22    | build flags, see @ref TpUartEmuBuildFlags (format 3)      |
  * | n-1   | checksum: all octets before it XOR'ed, then inverted      |
  *
  * A host has to accept a longer answer of a later format and ignore the
@@ -142,8 +144,16 @@ enum TpUartStateFlags : uint8_t
  */
 enum TpUartEmuIdentify : uint8_t
 {
-    TPUART_EMU_IDENTIFY_FORMAT = 2,  //!< format described above
-    TPUART_EMU_IDENTIFY_LENGTH = 16  //!< octets 2..17
+    TPUART_EMU_IDENTIFY_FORMAT = 3,  //!< format described above
+    TPUART_EMU_IDENTIFY_LENGTH = 21  //!< octets 2..22
+};
+
+/**
+ * Build flags in octet 22 of the answer to @ref U_EMU_IDENTIFY_REQ.
+ */
+enum TpUartEmuBuildFlags : uint8_t
+{
+    TPUART_EMU_BUILD_FLAG_DIRTY = 0x01 //!< built from a working tree with changes to the commit
 };
 
 /**

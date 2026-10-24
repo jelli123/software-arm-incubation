@@ -436,6 +436,8 @@ class FunctionTest:
             if r[2] >= 2 and r[1] >= 16:
                 self.features, self.max_rate = r[16], r[17]
                 info += f", Features 0x{r[16]:02X}, max. Rate {EMU_RATES[r[17]] if r[17] < len(EMU_RATES) else r[17]}"
+            if r[2] >= 3 and r[1] >= 21:
+                info += f", Build {r[18:22].hex()}{' (geändert)' if r[22] & 0x01 else ''}"
         check("U_EmuIdentify.req -> Antwort mit gültiger Prüfsumme", ok, info)
 
         tp.write([U_SYSTEM_STATE_REQ])

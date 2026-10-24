@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(TPUART2-Emu LANGUAGES CXX VERSION 0.12)
+project(TPUART2-Emu LANGUAGES CXX VERSION 0.13)
 
 set(CMAKE_VERBOSE_MAKEFILE ON CACHE BOOL "Enable verbose output from the build system")
 set(CMAKE_CXX_STANDARD 17)
@@ -35,6 +35,13 @@ include(tpuart2_emu.cmake)
 set(TARGET_ARM ${PROJECT_NAME}_arm)
 
 add_executable(${TARGET_ARM} ${SB_TPUART2_EMU_SRC})
+
+# Git commit of the build for U_EmuIdentify, see tools/emu_build_id.sh
+add_custom_target(emu_build_id
+    COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tools/emu_build_id.sh
+    BYPRODUCTS ${CMAKE_CURRENT_SOURCE_DIR}/src/emu_build_id.h
+)
+add_dependencies(${TARGET_ARM} emu_build_id)
 
 add_subdirectory(${SBLIB_PATH} sblib)
 add_subdirectory(${SBLPC_DIR} CMSIS_CORE_LPC11xx)

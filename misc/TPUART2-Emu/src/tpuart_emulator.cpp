@@ -378,6 +378,13 @@ void TpUartEmulator::handleIdentify()
     answer[featureOctet] |= TPUART_EMU_FEATURE_READY;
 #endif
     answer[featureOctet + 1] = TPUART_EMU_RATE_MAX;
+    constexpr uint8_t buildIdOctet = featureOctet + 2;
+    answer[buildIdOctet]     = static_cast<uint8_t>(TPUART_EMU_BUILD_ID >> 24);
+    answer[buildIdOctet + 1] = static_cast<uint8_t>(TPUART_EMU_BUILD_ID >> 16);
+    answer[buildIdOctet + 2] = static_cast<uint8_t>(TPUART_EMU_BUILD_ID >> 8);
+    answer[buildIdOctet + 3] = static_cast<uint8_t>(TPUART_EMU_BUILD_ID);
+    answer[buildIdOctet + 4] = TPUART_EMU_BUILD_DIRTY ? TPUART_EMU_BUILD_FLAG_DIRTY : 0;
+    static_assert(buildIdOctet + 5 == sizeof(answer) - 1, "U_EmuIdentify answer layout");
 
     constexpr uint8_t checksumOctet = sizeof(answer) - 1;
     uint8_t checksum = 0;

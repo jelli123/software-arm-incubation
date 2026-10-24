@@ -102,20 +102,28 @@ Telegramm vom Bus dazwischenkommt:
 | Oktett | Inhalt                                                    |
 | ------ | --------------------------------------------------------- |
 | 0      | `0xFE`                                                    |
-| 1      | Anzahl der Oktette 2 … n-2, derzeit `16`                  |
-| 2      | Format der Antwort, derzeit `2`                           |
+| 1      | Anzahl der Oktette 2 … n-2, derzeit `21`                  |
+| 2      | Format der Antwort, derzeit `3`                           |
 | 3, 4   | Firmware-Version Major, Minor (z. B. `0`, `10` = 0.10)    |
 | 5, 6   | `SBLIB_VERSION`, High- und Low-Byte (z. B. `0x02 0x11`)   |
 | 7      | längster Frame inkl. Prüfsumme (`64`)                     |
 | 8 … 15 | Anwendungsname, 8 ASCII-Zeichen (`SBtpuart`)              |
 | 16     | Features (ab Format 2): Bit 0 = `U_EmuConfigure`, Bit 1 = `/LPC_READY` wird getrieben, Bit 2 = `U_SystemState` (ab 0.12) |
 | 17     | höchster Raten-Code von `U_EmuConfigure` (ab Format 2), `3` |
+| 18 … 21 | Build-Kennung (ab Format 3, 0.13): die ersten 8 Hex-Ziffern des Git-Commits, MSB zuerst, `0` = unbekannt |
+| 22     | Build-Flags (ab Format 3): Bit 0 = gebaut mit Änderungen gegenüber dem Commit |
 | n-1    | Prüfsumme: alle Oktette davor XOR, dann invertiert        |
 
 Ein Host muss eine längere Antwort eines späteren Formats annehmen und die
 Oktette überspringen, die er nicht kennt. Format 1 (Version 0.10) endet nach
-Oktett 15. Die Version steht an einer Stelle, in
-[src/emu_version.h](src/emu_version.h).
+Oktett 15, Format 2 (0.11, 0.12) nach Oktett 17. Die Version steht an einer
+Stelle, in [src/emu_version.h](src/emu_version.h). Sie wird mit jeder Änderung
+am Verhalten erhöht.
+
+Die Build-Kennung schreibt [tools/emu_build_id.sh](tools/emu_build_id.sh) vor
+jedem Build nach `src/emu_build_id.h` (MCUXpresso: Pre-Build-Step, CMake:
+Target `emu_build_id`). Damit lässt sich am Gerät auch zwischen zwei Builds
+derselben Version unterscheiden. Ein Host sollte sie ins Log schreiben.
 
 ### Schnellere Rate
 
@@ -221,7 +229,7 @@ lässt PIO2_6 unberührt.
 | `0x4B` + 1 Byte | `U_SystemStat.ind` (NCN)       |
 | `0x41`          | `U_ProductID.response`         |
 | `0xFD` …        | `U_EmuConfigure.res` (Selfbus), 4 Byte |
-| `0xFE` …        | `U_EmuIdentify.res` (Selfbus), 19 Byte (Format 1: 17) |
+| `0xFE` …        | `U_EmuIdentify.res` (Selfbus), 24 Byte (Format 1: 17, Format 2: 19) |
 | `0x8B` / `0x0B` | `L_Data.con` positiv / negativ |
 | Rohframe        | `L_Data.ind` inkl. Prüfsumme, nach `U_ActivateCRC` plus 2 Byte CRC |
 
