@@ -68,7 +68,9 @@ Testwerte darauf. Der Exit-Code ist 0, wenn alle Prüfungen bestehen.
 2. **Tunnel:** CONNECT und CONNECTIONSTATE zum KNX/IP-Interface.
 3. **Emu → Bus → IP:** Gruppentelegramme mit 1 Bit, 1, 2 und 14 Byte als
    Standard Frame, Extended Frames mit 20 und 40 Byte und bis zum längsten
-   Frame, den `U_EmuIdentify` meldet (64 Oktette = 54 Byte Daten). Geprüft
+   Frame, den `U_EmuIdentify` meldet (ab 0.14 263 Oktette = 253 Byte Daten,
+   mit `U_L_DataOffset` ab Oktett 64; `--max-frame` begrenzt das, wenn das
+   KNX/IP-Interface am Bus weniger kann). Geprüft
    werden ein positives `L_Data.con`, die Daten, die Quelladresse und der
    Frametyp.
 4. **IP → Bus → Emu:** dieselben Telegramme in der Gegenrichtung. Geprüft

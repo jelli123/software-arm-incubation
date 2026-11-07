@@ -102,21 +102,24 @@ Telegramm vom Bus dazwischenkommt:
 | Oktett | Inhalt                                                    |
 | ------ | --------------------------------------------------------- |
 | 0      | `0xFE`                                                    |
-| 1      | Anzahl der Oktette 2 … n-2, derzeit `21`                  |
-| 2      | Format der Antwort, derzeit `3`                           |
+| 1      | Anzahl der Oktette 2 … n-2, derzeit `23`                  |
+| 2      | Format der Antwort, derzeit `4`                           |
 | 3, 4   | Firmware-Version Major, Minor (z. B. `0`, `10` = 0.10)    |
 | 5, 6   | `SBLIB_VERSION`, High- und Low-Byte (z. B. `0x02 0x11`)   |
-| 7      | längster Frame inkl. Prüfsumme (`64`)                     |
+| 7      | längster Frame inkl. Prüfsumme, auf 255 begrenzt (`255`, bis 0.13 `64`) |
 | 8 … 15 | Anwendungsname, 8 ASCII-Zeichen (`SBtpuart`)              |
 | 16     | Features (ab Format 2): Bit 0 = `U_EmuConfigure`, Bit 1 = `/LPC_READY` wird getrieben, Bit 2 = `U_SystemState` (ab 0.12) |
 | 17     | höchster Raten-Code von `U_EmuConfigure` (ab Format 2), `3` |
 | 18 … 21 | Build-Kennung (ab Format 3, 0.13): die ersten 8 Hex-Ziffern des Git-Commits, MSB zuerst, `0` = unbekannt |
 | 22     | Build-Flags (ab Format 3): Bit 0 = gebaut mit Änderungen gegenüber dem Commit |
+| 23, 24 | längster Frame inkl. Prüfsumme, MSB zuerst (ab Format 4, 0.14): `263` |
 | n-1    | Prüfsumme: alle Oktette davor XOR, dann invertiert        |
 
 Ein Host muss eine längere Antwort eines späteren Formats annehmen und die
 Oktette überspringen, die er nicht kennt. Format 1 (Version 0.10) endet nach
-Oktett 15, Format 2 (0.11, 0.12) nach Oktett 17. Die Version steht an einer
+Oktett 15, Format 2 (0.11, 0.12) nach Oktett 17, Format 3 (0.13) nach Oktett
+22. Ein Host, der Format 4 nicht kennt, liest aus Oktett 7 `255` und sendet
+damit Extended Frames, nur nicht die längsten. Die Version steht an einer
 Stelle, in [src/emu_version.h](src/emu_version.h). Sie wird mit jeder Änderung
 am Verhalten erhöht.
 
@@ -267,18 +270,21 @@ OpenKNX-Stack (`_isEcho`) verwerfen das Echo ohnehin.
 `sblib` meldet das Sendeergebnis nicht nach außen
 (`TLayer4::finishedSendingTelegram()` ist nicht virtuell). Nach Abschluss der
 Übertragung wird `0x8B` gesendet. `sblib` wiederholt intern bereits bei NACK und
-BUSY (je 3×). Nur bei Zeitüberschreitung (`TPUART_TX_CONFIRM_TIMEOUT_MS`, 400 ms)
+BUSY (je 3×). Nur bei Zeitüberschreitung (`TPUART_TX_CONFIRM_TIMEOUT_MS`, 400 ms
+für einen Standard Frame, `TPUART_TX_CONFIRM_US_PER_OCTET` = 0,5 ms je weiteres
+Oktett, also 520 ms für 263 Oktette)
 kommt `0x0B`. `TRANSMIT_ERROR` setzt das Timeout nicht: Ein echter TP-UART 2
 meldet damit Bitfehler auf dem Bus, einen unquittierten Frame nur über das
 negative `L_Data.con`.
 
-### 4. Extended Frames bis 64 Oktette
+### 4. Extended Frames bis 263 Oktette
 
 Standard- und Extended Frames werden in beide Richtungen übertragen. Ein Frame
-darf einschließlich Prüfsumme höchstens 64 Oktette lang sein
+darf einschließlich Prüfsumme höchstens 263 Oktette lang sein
 (`TPUART_MAX_FRAME_SIZE`), ein Extended Frame trägt damit eine APDU von bis zu
-**55 Oktetten**. Der Host muss seine maximale APDU-Länge entsprechend
-begrenzen. Längere Frames vom Host werden mit negativem `L_Data.con` und
+**254 Oktetten**, das Maximum auf TP. Ab Oktett 64 schickt der Host jedem
+Oktett ein `U_L_DataOffset` voran. Bis Version 0.13 waren es 64 Oktette (APDU
+55). Der Host muss seine maximale APDU-Länge entsprechend begrenzen. Längere Frames vom Host werden mit negativem `L_Data.con` und
 `PROTOCOL_ERROR` abgewiesen, längere Frames vom Bus werden nicht quittiert und
 nicht weitergereicht.
 

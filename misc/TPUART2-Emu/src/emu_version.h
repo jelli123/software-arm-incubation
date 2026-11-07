@@ -25,7 +25,7 @@
 /** Major version, exactly 1 digit. */
 #define TPUART_EMU_VERSION_MAJOR "0"
 /** Minor version, exactly 2 digits. */
-#define TPUART_EMU_VERSION_MINOR "13"
+#define TPUART_EMU_VERSION_MINOR "14"
 
 #if __has_include("emu_build_id.h")
 #   include "emu_build_id.h"

@@ -33,6 +33,7 @@ TpUartEmulator::TpUartEmulator(BcuTpUart& bcuTpUart) :
     txPending(false),
     txSuppressCon(false),
     txStartTime(0),
+    txConfirmTimeout(TPUART_TX_CONFIRM_TIMEOUT_MS),
     txQueue(TPUART_TX_QUEUE_SIZE),
     lastTxByteTime(0),
     hostRate(TPUART_EMU_RATE_19200),
@@ -368,7 +369,7 @@ void TpUartEmulator::handleIdentify()
         TPUART_EMU_MINOR,
         static_cast<uint8_t>(SBLIB_VERSION >> 8),
         static_cast<uint8_t>(SBLIB_VERSION),
-        TPUART_MAX_FRAME_SIZE
+        static_cast<uint8_t>((TPUART_MAX_FRAME_SIZE > 0xFF) ? 0xFF : TPUART_MAX_FRAME_SIZE)
     };
     constexpr uint8_t nameOctet = 8;
     memcpy(answer + nameOctet, TPUART_EMU_APP_NAME, sizeof(TPUART_EMU_APP_NAME) - 1);
@@ -384,7 +385,10 @@ void TpUartEmulator::handleIdentify()
     answer[buildIdOctet + 2] = static_cast<uint8_t>(TPUART_EMU_BUILD_ID >> 8);
     answer[buildIdOctet + 3] = static_cast<uint8_t>(TPUART_EMU_BUILD_ID);
     answer[buildIdOctet + 4] = TPUART_EMU_BUILD_DIRTY ? TPUART_EMU_BUILD_FLAG_DIRTY : 0;
-    static_assert(buildIdOctet + 5 == sizeof(answer) - 1, "U_EmuIdentify answer layout");
+    constexpr uint8_t maxFrameOctet = buildIdOctet + 5;
+    answer[maxFrameOctet]     = static_cast<uint8_t>(TPUART_MAX_FRAME_SIZE >> 8);
+    answer[maxFrameOctet + 1] = static_cast<uint8_t>(TPUART_MAX_FRAME_SIZE);
+    static_assert(maxFrameOctet + 2 == sizeof(answer) - 1, "U_EmuIdentify answer layout");
 
     constexpr uint8_t checksumOctet = sizeof(answer) - 1;
     uint8_t checksum = 0;
@@ -578,6 +582,15 @@ void TpUartEmulator::submitFrame(const uint16_t length)
     txPending = true;
     txSuppressCon = false;
     txStartTime = millis();
+    txConfirmTimeout = confirmTimeout(length);
+}
+
+uint32_t TpUartEmulator::confirmTimeout(const uint16_t length)
+{
+    // A frame of 263 octets alone takes some 360 ms on the bus.
+    constexpr uint16_t standardFrame = 23;
+    const uint32_t extra = (length > standardFrame) ? (length - standardFrame) : 0u;
+    return TPUART_TX_CONFIRM_TIMEOUT_MS + (extra * TPUART_TX_CONFIRM_US_PER_OCTET) / 1000u;
 }
 
 void TpUartEmulator::pollHost()
@@ -672,7 +685,7 @@ void TpUartEmulator::pollKnxTransmit()
         return;
     }
 
-    if (static_cast<uint32_t>(millis() - txStartTime) >= TPUART_TX_CONFIRM_TIMEOUT_MS)
+    if (static_cast<uint32_t>(millis() - txStartTime) >= txConfirmTimeout)
     {
         // Only the negative confirmation: a real TP-UART 2 reports a frame
         // nobody acknowledged that way and keeps TE for bit errors on the bus.

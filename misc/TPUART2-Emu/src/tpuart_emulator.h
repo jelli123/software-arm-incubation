@@ -83,6 +83,9 @@ private:
     /** CRC16-CCITT as appended by @ref U_ACTIVATE_CRC_REQ. */
     static uint16_t crc16Ccitt(const uint8_t* data, uint16_t length);
 
+    /** Time after which a frame of @p length octets is confirmed negatively. */
+    static uint32_t confirmTimeout(uint16_t length);
+
     [[nodiscard]] bool queueFree(uint16_t count) const;
     void queueByte(uint8_t data);
     void queueBytes(const uint8_t* data, uint16_t length);
@@ -105,6 +108,7 @@ private:
     bool     txPending;             //!< waiting for the frame to leave the bus
     bool     txSuppressCon;         //!< drop the confirmation, e.g. after a reset
     uint32_t txStartTime;           //!< millis() when the frame was handed over
+    uint32_t txConfirmTimeout;      //!< ms until a negative confirmation, see confirmTimeout()
 
     // Controller -> host
     RingBuffer txQueue;             //!< octets waiting to be sent to the host

@@ -151,18 +151,34 @@
 
 #ifndef TPUART_TX_CONFIRM_TIMEOUT_MS
 /**
- * Time in milliseconds after which an unconfirmed bus transmission is
- * reported to the host as a negative L_Data.con.
+ * Time in milliseconds after which an unconfirmed bus transmission of a
+ * standard frame is reported to the host as a negative L_Data.con. Longer
+ * frames get @ref TPUART_TX_CONFIRM_US_PER_OCTET more per octet.
  *
- * Must stay below the confirmation timeout of the host. The OpenKNX stack
- * uses 500 ms (CONFIRM_TIMEOUT), knxd retries after 2 s.
+ * Must stay below the confirmation timeout of the host, for the longest frame
+ * too, including the time the host needs to send it. The OpenKNX stack gives
+ * up after 1 s (older versions 500 ms), knxd retries after 2 s.
  */
 #   define TPUART_TX_CONFIRM_TIMEOUT_MS (400)
 #endif
 
+#ifndef TPUART_TX_CONFIRM_US_PER_OCTET
+/**
+ * Additional confirmation time in microseconds per octet beyond a standard
+ * frame of 23. A frame of 263 octets is given 520 ms: one transmission takes
+ * some 370 ms, repetitions of such a frame are not covered. More is not
+ * possible: at 19200 baud the host needs some 415 ms to send that frame, and
+ * the OpenKNX stack gives up 1 s after it started.
+ */
+#   define TPUART_TX_CONFIRM_US_PER_OCTET (500)
+#endif
+
 #ifndef TPUART_TX_QUEUE_SIZE
-/** Size of the ring buffer towards the host, see @ref RingBuffer::Size. */
-#   define TPUART_TX_QUEUE_SIZE     (RingBuffer::Size::bytes_256)
+/**
+ * Size of the ring buffer towards the host, see @ref RingBuffer::Size. Has to
+ * hold a frame of TPUART_MAX_FRAME_SIZE octets plus CRC, with room for more.
+ */
+#   define TPUART_TX_QUEUE_SIZE     (RingBuffer::Size::bytes_512)
 #endif
 
 #endif /* TPUART_CONFIG_H_ */

@@ -131,21 +131,26 @@ enum TpUartStateFlags : uint8_t
  * | 2     | format of the answer (@ref TPUART_EMU_IDENTIFY_FORMAT)    |
  * | 3, 4  | firmware version, major and minor                         |
  * | 5, 6  | sblib version, high and low octet of SBLIB_VERSION        |
- * | 7     | longest frame incl. checksum (@ref TPUART_MAX_FRAME_SIZE) |
+ * | 7     | longest frame incl. checksum, at most 255 (@ref TPUART_MAX_FRAME_SIZE) |
  * | 8..15 | application name, 8 ASCII characters                      |
  * | 16    | features, see @ref TpUartEmuFeature (format 2 and later)  |
  * | 17    | highest rate code of @ref U_EMU_CONFIGURE_REQ (format 2)  |
  * | 18..21| build id, first 8 hex digits of the Git commit, MSB first (format 3), 0 if unknown |
  * | 22    | build flags, see @ref TpUartEmuBuildFlags (format 3)      |
+ * | 23, 24| longest frame incl. checksum, MSB first (format 4)         |
  * | n-1   | checksum: all octets before it XOR'ed, then inverted      |
  *
  * A host has to accept a longer answer of a later format and ignore the
  * octets it does not know; their number is in octet 1.
+ *
+ * A frame of 263 octets does not fit into octet 7. It reports 255 then, so a
+ * host that does not know format 4 still sends extended frames, only not the
+ * longest ones.
  */
 enum TpUartEmuIdentify : uint8_t
 {
-    TPUART_EMU_IDENTIFY_FORMAT = 3,  //!< format described above
-    TPUART_EMU_IDENTIFY_LENGTH = 21  //!< octets 2..22
+    TPUART_EMU_IDENTIFY_FORMAT = 4,  //!< format described above
+    TPUART_EMU_IDENTIFY_LENGTH = 23  //!< octets 2..24
 };
 
 /**
@@ -219,10 +224,12 @@ constexpr uint16_t TPUART_CRC_POLYNOMIAL = 0x1021;
 
 /**
  * Maximum size of a KNX frame including its checksum octet. Also the size of
- * sblib's receive buffer. An extended frame of this size carries an APDU of
- * 64 - @ref LPDU_EXT_OVERHEAD = 55 octets.
+ * sblib's receive buffers. An extended frame of this size carries an APDU of
+ * 263 - @ref LPDU_EXT_OVERHEAD = 254 octets, the most its length octet allows
+ * (255 is reserved as escape). Frames beyond 64 octets the host sends with
+ * @ref U_L_DATA_OFFSET_REQ.
  */
-constexpr uint16_t TPUART_MAX_FRAME_SIZE = 64;
+constexpr uint16_t TPUART_MAX_FRAME_SIZE = 263;
 /** Number of octets a standard L_Data frame has in addition to its payload. */
 constexpr uint16_t LPDU_STD_OVERHEAD = 8;
 /** Number of octets an extended L_Data frame has in addition to its payload. */

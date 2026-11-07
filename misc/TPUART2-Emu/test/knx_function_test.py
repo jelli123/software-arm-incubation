@@ -48,7 +48,7 @@ TPUART_PRODUCT_ID  = 0x41
 L_DATA_CON_POS     = 0x8B
 L_DATA_CON_NEG     = 0x0B
 
-TP_MAX_FRAME       = 64    # TPUART_MAX_FRAME_SIZE of the emulator
+TP_MAX_FRAME       = 263   # TPUART_MAX_FRAME_SIZE of the emulator
 LPDU_STD_OVERHEAD  = 8
 LPDU_EXT_OVERHEAD  = 9
 
@@ -190,9 +190,15 @@ class TpUart:
         return out
 
     def send_frame(self, frame):
-        """L_Data.req as U_L_DataStart/Cont ... U_L_DataEnd, one octet each."""
+        """
+        L_Data.req as U_L_DataStart/Cont ... U_L_DataEnd, one octet each.
+        Beyond octet 63 every octet gets U_L_DataOffset first, like the
+        OpenKNX stack does it.
+        """
         req = bytearray()
         for i, b in enumerate(frame):
+            if i >> 6:
+                req.append(0x08 | (i >> 6))
             code = 0x40 if i == len(frame) - 1 else 0x80
             req += bytes([code | (i & 0x3F), b])
         self.write(req)
@@ -438,6 +444,11 @@ class FunctionTest:
                 info += f", Features 0x{r[16]:02X}, max. Rate {EMU_RATES[r[17]] if r[17] < len(EMU_RATES) else r[17]}"
             if r[2] >= 3 and r[1] >= 21:
                 info += f", Build {r[18:22].hex()}{' (geändert)' if r[22] & 0x01 else ''}"
+            if r[2] >= 4 and r[1] >= 23:
+                self.max_frame = (r[23] << 8) | r[24]
+                info += f", max. Frame (16 Bit) {self.max_frame}"
+            if self.args.max_frame:
+                self.max_frame = min(self.max_frame, self.args.max_frame)
         check("U_EmuIdentify.req -> Antwort mit gültiger Prüfsumme", ok, info)
 
         tp.write([U_SYSTEM_STATE_REQ])
@@ -611,7 +622,9 @@ class FunctionTest:
 
         print(f"\n== 5. Frame länger als {self.max_frame} Oktette vom Host ==")
         tp.flush()
-        frame = tp_group_frame(self.src, ga + 8, group_value_write(bytes(ext_max + 2)), True)
+        # The longest valid frame and one octet more: too long even if the
+        # length octet allows no longer frame.
+        frame = tp_group_frame(self.src, ga + 8, group_value_write(bytes(ext_max)), True) + bytes(1)
         tp.send_frame(frame)
         events = tp.poll(0.6)
         time.sleep(0.3)
@@ -682,6 +695,8 @@ def main():
     p.add_argument("--burst", type=int, default=30, help="telegrams per direction in section 7")
     p.add_argument("--boot", type=float, default=2.0, help="seconds to wait after opening the port")
     p.add_argument("--no-extended", action="store_true", help="skip extended frames")
+    p.add_argument("--max-frame", type=int, default=0,
+                   help="longest frame to test, if the IP interface on the line takes less than the emulator")
     args = p.parse_args()
 
     tp = TpUart(args.port, args.boot)
