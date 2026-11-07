@@ -29,9 +29,11 @@ TpUartEmulator::TpUartEmulator(BcuTpUart& bcuTpUart) :
     cmdDataExpected(0),
     assembleBuffer{},
     txOffset(0),
-    txFrame{},
-    txPending(false),
-    txSuppressCon(false),
+    txFrames{},
+    txNext(0),
+    txQueuedLength(0),
+    txOnBus(false),
+    txOnBusOwed(false),
     txStartTime(0),
     txConfirmTimeout(TPUART_TX_CONFIRM_TIMEOUT_MS),
     txQueue(TPUART_TX_QUEUE_SIZE),
@@ -325,12 +327,11 @@ void TpUartEmulator::resetState()
     rateSwitchPending = false;
     bcu.bus->discardReceivedTelegram();
 
-    if (txPending)
-    {
-        // A frame may still be on its way out. Keep the buffer reserved, but
-        // do not report its confirmation to the host after the reset.
-        txSuppressCon = true;
-    }
+    // A frame may still be on its way out. Its buffer stays reserved, but its
+    // confirmation is not reported after the reset. One not yet handed over
+    // is dropped.
+    txOnBusOwed = false;
+    txQueuedLength = 0;
 }
 
 void TpUartEmulator::handleStateRequest()
@@ -553,7 +554,7 @@ void TpUartEmulator::submitFrame(const uint16_t length)
 {
     // Reject invalid frames, frames sent before the previous confirmation and
     // frames sent while the transceiver is detached from the bus.
-    if (!isSendableFrame(length) || txPending || stopMode)
+    if (!isSendableFrame(length) || confirmationOwed() || stopMode)
     {
         rejectFrame();
         return;
@@ -568,21 +569,44 @@ void TpUartEmulator::submitFrame(const uint16_t length)
         return;
     }
 
-    memcpy(txFrame, assembleBuffer, length);
+    // txFrames[txNext] is never the buffer Bus may still be sending.
+    memcpy(txFrames[txNext], assembleBuffer, length);
+    txQueuedLength = length;
+    txStartTime = millis();
+    txConfirmTimeout = confirmTimeout(length);
+    handOverFrame();
+}
+
+void TpUartEmulator::handOverFrame()
+{
+    // Bus::sendTelegram() would wait in a loop for the previous frame - long
+    // enough for the host UART to overrun - and the previous frame is still
+    // in the other buffer, so waiting here costs nothing.
+    if ((txQueuedLength == 0) || stopMode || bcu.bus->sendingFrame())
+    {
+        return;
+    }
+
+    uint8_t* frame = txFrames[txNext];
 
     // Bus::prepareTelegram() overwrites the sender address with bcu->ownAddress().
     // A transceiver has to put the frame on the bus verbatim, so adopt the source
     // address of this frame first. This is what makes tunneling with several
     // individual addresses work.
-    const auto source = (frameType(txFrame) == FRAME_STANDARD) ? LPDU_STD_SOURCE_OCTET : LPDU_EXT_SOURCE_OCTET;
-    bcu.setOwnAddress(makeWord(txFrame[source], txFrame[source + 1]));
+    const auto source = (frameType(frame) == FRAME_STANDARD) ? LPDU_STD_SOURCE_OCTET : LPDU_EXT_SOURCE_OCTET;
+    bcu.setOwnAddress(makeWord(frame[source], frame[source + 1]));
 
     // The last octet is the checksum, sblib recalculates and appends it.
-    bcu.bus->sendTelegram(txFrame, static_cast<uint16_t>(length - 1));
-    txPending = true;
-    txSuppressCon = false;
-    txStartTime = millis();
-    txConfirmTimeout = confirmTimeout(length);
+    bcu.bus->sendTelegram(frame, static_cast<uint16_t>(txQueuedLength - 1));
+    txQueuedLength = 0;
+    txNext ^= 1u;
+    txOnBus = true;
+    txOnBusOwed = true;
+}
+
+bool TpUartEmulator::confirmationOwed() const
+{
+    return (txQueuedLength != 0) || (txOnBus && txOnBusOwed);
 }
 
 uint32_t TpUartEmulator::confirmTimeout(const uint16_t length)
@@ -667,34 +691,29 @@ void TpUartEmulator::pollKnxReceive()
 
 void TpUartEmulator::pollKnxTransmit()
 {
-    if (!txPending)
+    if (txOnBus && !bcu.bus->sendingFrame())
     {
-        return;
-    }
-
-    if (!bcu.bus->sendingFrame())
-    {
-        txPending = false;
-        if (!txSuppressCon)
+        txOnBus = false;
+        if (txOnBusOwed)
         {
             // sblib does not expose the transmission result, and it already
             // repeats a frame on NACK and BUSY. Report a positive confirmation.
+            txOnBusOwed = false;
             queueByte(static_cast<uint8_t>(L_DATA_CON | L_DATA_CON_SUCCESS));
         }
-        txSuppressCon = false;
-        return;
     }
 
-    if (static_cast<uint32_t>(millis() - txStartTime) >= txConfirmTimeout)
+    handOverFrame();
+
+    if (confirmationOwed() && (static_cast<uint32_t>(millis() - txStartTime) >= txConfirmTimeout))
     {
         // Only the negative confirmation: a real TP-UART 2 reports a frame
         // nobody acknowledged that way and keeps TE for bit errors on the bus.
-        txPending = false;
-        if (!txSuppressCon)
-        {
-            queueByte(L_DATA_CON);
-        }
-        txSuppressCon = false;
+        // A frame still on the bus goes on, its buffer stays reserved; one
+        // that never got there is dropped, the host takes it as failed.
+        txOnBusOwed = false;
+        txQueuedLength = 0;
+        queueByte(L_DATA_CON);
     }
 }
 

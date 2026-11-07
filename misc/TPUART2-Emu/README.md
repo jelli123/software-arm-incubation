@@ -277,6 +277,14 @@ kommt `0x0B`. `TRANSMIT_ERROR` setzt das Timeout nicht: Ein echter TP-UART 2
 meldet damit Bitfehler auf dem Bus, einen unquittierten Frame nur über das
 negative `L_Data.con`.
 
+Nach dem Timeout kann der Bus noch mit dem Frame beschäftigt sein, etwa mit
+Wiederholungen eines langen Frames. Der Host darf dann schon den nächsten
+schicken. Der Emulator hat dafür zwei Sendepuffer im Wechsel: Der neue Frame
+wartet im freien Puffer und geht an `sblib`, sobald der Bus frei ist. Erst ein
+dritter Frame, bevor der zweite bestätigt ist, wird abgewiesen. Kommt der Bus
+innerhalb des Timeouts nicht frei, wird der wartende Frame negativ bestätigt
+und verworfen.
+
 ### 4. Extended Frames bis 263 Oktette
 
 Standard- und Extended Frames werden in beide Richtungen übertragen. Ein Frame

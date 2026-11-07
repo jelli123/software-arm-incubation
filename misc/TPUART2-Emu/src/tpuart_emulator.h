@@ -83,6 +83,11 @@ private:
     /** CRC16-CCITT as appended by @ref U_ACTIVATE_CRC_REQ. */
     static uint16_t crc16Ccitt(const uint8_t* data, uint16_t length);
 
+    /** Hand a waiting frame over to sblib once Bus is free. */
+    void handOverFrame();
+    /** The host waits for an L_Data.con. */
+    [[nodiscard]] bool confirmationOwed() const;
+
     /** Time after which a frame of @p length octets is confirmed negatively. */
     static uint32_t confirmTimeout(uint16_t length);
 
@@ -103,11 +108,15 @@ private:
     uint8_t assembleBuffer[TPUART_MAX_FRAME_SIZE]; //!< frame as sent by the host
     uint8_t txOffset;               //!< current U_L_DataOffset, unit 64 octets
 
-    // Frame handed over to sblib. Must stay valid while Bus is sending.
-    uint8_t txFrame[TPUART_MAX_FRAME_SIZE];
-    bool     txPending;             //!< waiting for the frame to leave the bus
-    bool     txSuppressCon;         //!< drop the confirmation, e.g. after a reset
-    uint32_t txStartTime;           //!< millis() when the frame was handed over
+    // Frames for sblib, used in turn. The one handed over must stay valid
+    // while Bus is sending it - after a confirmation timeout that can be
+    // longer than the host waits, and the host sends the next frame then.
+    uint8_t  txFrames[2][TPUART_MAX_FRAME_SIZE];
+    uint8_t  txNext;                //!< index of the buffer for the next frame
+    uint16_t txQueuedLength;        //!< octets of the frame in txFrames[txNext], 0 = none waiting
+    bool     txOnBus;               //!< a frame is handed over and Bus not done with it
+    bool     txOnBusOwed;           //!< the host still waits for the confirmation of that frame
+    uint32_t txStartTime;           //!< millis() when the frame the host waits for came in
     uint32_t txConfirmTimeout;      //!< ms until a negative confirmation, see confirmTimeout()
 
     // Controller -> host
